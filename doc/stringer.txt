@@ -1,0 +1,112 @@
+*stringer.txt*  Ordered codepaths for Neovim                         *stringer*
+
+Stringer 0.1 requires Neovim 0.10 or newer. No dependencies.
+
+==============================================================================
+QUICK START                                                 *stringer-start*
+
+Open a saved code file, then: >
+    :Stringer new request-flow
+    :Stringer add
+<
+Visit other locations and add more marks. Paths may span repositories. >
+    :Stringer next
+    :Stringer prev
+    :Stringer show
+<
+The pane contains a version header and one mark per line. Reorder or delete
+complete mark lines using normal editing operations, then :write. Keep the
+header. Press <CR> on a saved mark to jump, or q to close a clean pane.
+
+==============================================================================
+COMMANDS                                                 *:Stringer*
+
+:Stringer new {name}     Create and activate an empty path. Names contain only
+                        letters, numbers, hyphens, and underscores.
+:Stringer open [name]    Activate a saved path. Without a name, use vim.ui.select.
+:Stringer add            Append current file and line; save immediately.
+:Stringer show           Open/focus a right-side editable path pane.
+:Stringer next           Next mark, or first if no mark is active.
+:Stringer prev           Previous mark, or last if no mark is active.
+
+Only one path is active. Navigation does not wrap. From a code window, it
+replaces that window's buffer. From the pane, it uses the last focused code
+window in the same tab, or another eligible code window. If none exists, open
+one first. Navigation respects 'hidden' and modified-buffer safeguards.
+
+No global mappings are installed. Commands support completion.
+
+==============================================================================
+CONFIGURATION                                            *stringer-setup*
+
+Setup is optional: >lua
+    require('stringer').setup({
+      storage_dir = vim.fn.stdpath('data') .. '/stringer/paths',
+      pane_width = 48,
+    })
+<
+storage_dir             Directory for independent, cross-repository paths.
+pane_width              Initial path-pane width in columns; positive integer.
+
+StringerActive          Highlight for the active mark; defaults to Visual.
+
+==============================================================================
+EDITING AND RECOVERY                                      *stringer-editing*
+
+The pane is an acwrite buffer with a validating BufWriteCmd handler. Saves
+validate the whole file before replacing the stored file. Invalid input produces
+line-specific diagnostics, keeps the draft modified, and preserves the previous
+navigation snapshot. A failed :wq does not close the pane.
+
+While the pane is modified, next/prev use the saved snapshot. Adding marks,
+switching paths, and pane <CR> jumps require saving or discarding the draft first.
+Highlighting is hidden while the draft differs from the snapshot.
+
+To discard edits and reload the saved file, use :edit! in the pane. If another
+process changed the stored file, saving fails rather than overwriting it. Copy
+any draft edits to keep, :edit!, then reapply. With a clean/closed pane, opening
+the same path again also reloads it. External edit detection is content-based,
+not a multi-process locking protocol.
+
+The active mark is the last successfully navigated mark. Changing the ordered
+mark list on save clears it. Saving the same mark list or appending a mark
+preserves it. Opening a path resets it. Closing the pane leaves the path active.
+
+==============================================================================
+FORMAT                                                   *stringer-format*
+
+Each <name>.stringer file contains JSON Lines: >
+    {"type":"stringer","format_version":1,"mark_version":1}
+    {"file":"/workspace/service/main.lua","line":42}
+<
+The header versions the complete format and mark format separately. A mark has
+an absolute file path and positive, one-based integer line number. Duplicate
+locations and header-only paths are valid. Blank record lines, extra fields,
+relative paths, malformed JSON, and unsupported versions are rejected. A normal
+final newline is valid. JSON escaping handles special filename characters.
+
+These are fixed line references: code edits do not relocate marks. Missing files
+and lines past EOF produce errors without changing the active mark. Files must
+have been saved before marking them; modified file buffers use the cursor's
+current line. Absolute references depend on the local filesystem layout.
+
+The active path and position are not automatically restored on restart. Use
+:Stringer open to reopen a saved path. Split-based code navigation, automatic
+location tracking, structured editing, and fish-eye view are future work.
+
+==============================================================================
+LUA API                                                  *stringer-api*
+
+require('stringer') exposes:
+    setup(opts)         Optional configuration; errors on invalid options.
+    new(name)           Create and activate.
+    open(name?)         Open by name, or launch a picker.
+    add()               Append current file/line.
+    show()              Show the pane.
+    next() / prev()     Navigate in saved order.
+    jump(index)         Jump to a one-based mark index.
+
+Operations return true or nil, error and notify on failure. open() without a name
+returns after launching the asynchronous picker, before selection completes.
+
+ vim:tw=78:ts=8:noet:ft=help:norl:
