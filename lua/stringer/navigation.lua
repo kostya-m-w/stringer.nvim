@@ -2,6 +2,27 @@ local state = require('stringer.state')
 local uv = vim.uv or vim.loop
 local M = {}
 
+-- Only a focused code window influences proximity. Pane cursor movement must
+-- not change the active mark. Keep the current entry when distances tie.
+function M.nearest(record)
+  local win = vim.api.nvim_get_current_win()
+  if M.navigating or not M.eligible(win) then
+    return record.index
+  end
+  local file = vim.fs.normalize(vim.api.nvim_buf_get_name(0))
+  local line = vim.api.nvim_win_get_cursor(win)[1]
+  local best, distance
+  for i, mark in ipairs(record.marks) do
+    if mark.file == file then
+      local delta = math.abs(mark.line - line)
+      if not distance or delta < distance or (delta == distance and i == record.index) then
+        best, distance = i, delta
+      end
+    end
+  end
+  return best or record.index
+end
+
 function M.eligible(win)
   return win and vim.api.nvim_win_is_valid(win)
     and vim.api.nvim_win_get_config(win).relative == ''
@@ -56,6 +77,7 @@ function M.jump(record, index)
   if not win then
     return nil, err
   end
+  M.navigating = true
   local ok, result = pcall(function()
     local buf = vim.fn.bufadd(mark.file)
     vim.fn.bufload(buf)
@@ -73,6 +95,7 @@ function M.jump(record, index)
     end)
     vim.api.nvim_set_current_win(win)
   end)
+  M.navigating = false
   if not ok then
     return nil, tostring(result)
   end

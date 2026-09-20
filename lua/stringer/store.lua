@@ -80,7 +80,7 @@ local function unchanged(file, expected)
     return nil, 'Cannot check saved codepath: ' .. tostring(err)
   end
   if current ~= expected then
-    return nil, 'Codepath changed externally; reload it before saving (copy draft edits first)'
+    return nil, 'Codepath changed externally; use :Stringer reload before changing it'
   end
   return true
 end
@@ -137,6 +137,37 @@ function M.create(name)
     return nil, err
   end
   return { name = name, file = file, text = text, marks = {} }
+end
+
+function M.rename(record, name)
+  if not M.valid_name(name) then
+    return nil, 'Path names may contain only letters, numbers, hyphens, and underscores'
+  end
+  local file = vim.fs.dirname(record.file) .. '/' .. name .. '.stringer'
+  local ok, err = unchanged(record.file, record.text)
+  if not ok then
+    return nil, err
+  end
+  if file == record.file then
+    return file
+  end
+  ok, err = unchanged(file, nil)
+  if not ok then
+    return nil, err
+  end
+  -- Both names are in the same directory. Linking reserves the new name
+  -- without replacing an existing destination, then removes the old name.
+  ok, err = uv.fs_link(record.file, file)
+  if not ok then
+    return nil, 'Cannot rename codepath: ' .. tostring(err)
+  end
+  ok, err = uv.fs_unlink(record.file)
+  if not ok then
+    local removed, cleanup_err = uv.fs_unlink(file)
+    return nil, 'Cannot remove old codepath name: ' .. tostring(err)
+      .. (removed and '' or '; could not remove new name: ' .. tostring(cleanup_err))
+  end
+  return file
 end
 
 return M

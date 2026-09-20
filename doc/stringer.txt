@@ -1,6 +1,6 @@
 *stringer.txt*  Ordered codepaths for Neovim                         *stringer*
 
-Stringer 0.1 requires Neovim 0.10 or newer. No dependencies.
+Stringer 0.2 requires Neovim 0.10 or newer. No dependencies.
 
 ==============================================================================
 QUICK START                                                 *stringer-start*
@@ -9,32 +9,55 @@ Open a saved code file, then: >
     :Stringer new request-flow
     :Stringer add
 <
-Visit other locations and add more marks. Paths may span repositories. >
+Visit other locations and add marks. Paths can span repositories. >
     :Stringer next
     :Stringer prev
     :Stringer show
 <
-The pane contains a version header and one mark per line. Reorder or delete
-complete mark lines using normal editing operations, then :write. Keep the
-header. Press <CR> on a saved mark to jump, or q to close a clean pane.
+In the dedicated pane: <CR> jumps, dd removes, K/J move up/down, u undoes,
+r renames, R reloads, and q closes. Mark changes save immediately.
 
 ==============================================================================
 COMMANDS                                                 *:Stringer*
 
-:Stringer new {name}     Create and activate an empty path. Names contain only
-                        letters, numbers, hyphens, and underscores.
-:Stringer open [name]    Activate a saved path. Without a name, use vim.ui.select.
+:Stringer new [name]     Create and activate; prompt if no name supplied.
+:Stringer open [name]    Activate, or choose with vim.ui.select. If no paths
+                        exist, prompt to create one. Cancelling is harmless.
+:Stringer rename [name]  Rename active codepath; prompt if no name supplied.
 :Stringer add            Append current file and line; save immediately.
-:Stringer show           Open/focus a right-side editable path pane.
-:Stringer next           Next mark, or first if no mark is active.
-:Stringer prev           Previous mark, or last if no mark is active.
+:Stringer show           Open/focus the dedicated right-side pane.
+:Stringer next           Next mark, wrapping last to first.
+:Stringer prev           Previous mark, wrapping first to last.
+:Stringer remove         Remove selected mark and save.
+:Stringer move-up        Move selected mark one position up and save.
+:Stringer move-down      Move selected mark one position down and save.
+:Stringer undo           Undo last append, removal, or move and save.
+:Stringer reload         Reload active codepath from disk; clear undo history.
 
-Only one path is active. Navigation does not wrap. From a code window, it
-replaces that window's buffer. From the pane, it uses the last focused code
-window in the same tab, or another eligible code window. If none exists, open
-one first. Navigation respects 'hidden' and modified-buffer safeguards.
+Names use letters, numbers, hyphens, and underscores. Creating and renaming
+reject existing names. One codepath is active at a time. No global mappings
+are installed. Subcommands and saved path names have completion.
 
-No global mappings are installed. Commands support completion.
+From the pane, mark actions use its cursor row; from code, they use the active
+mark. Mark movement does not wrap, unlike navigation. Opening a path does not
+jump automatically. Closing its pane keeps the path active.
+
+==============================================================================
+ACTIVE MARK AND NAVIGATION                                *stringer-navigation*
+
+The nearest marked line in the focused code file determines the active mark.
+This updates on cursor movement and file/window focus changes. Equal-distance
+ties preserve the current entry if tied, otherwise choose the earlier entry
+in codepath order. No maximum distance or Tree-sitter integration is used.
+
+An unmarked file preserves the previous active mark. With no active mark, next
+starts at the first entry and previous at the last. Duplicate locations remain
+independently navigable. The pane shows the active mark with a highlight and >
+sign; moving its cursor alone does not change the active mark.
+
+Navigation uses the current code window. From the pane, it uses the last focused
+code window in the same tab, or another eligible code window. If none exists,
+open one first. Navigation honors 'hidden' and modified-buffer safeguards.
 
 ==============================================================================
 CONFIGURATION                                            *stringer-setup*
@@ -45,68 +68,75 @@ Setup is optional: >lua
       pane_width = 48,
     })
 <
-storage_dir             Directory for independent, cross-repository paths.
-pane_width              Initial path-pane width in columns; positive integer.
-
-StringerActive          Highlight for the active mark; defaults to Visual.
-
-==============================================================================
-EDITING AND RECOVERY                                      *stringer-editing*
-
-The pane is an acwrite buffer with a validating BufWriteCmd handler. Saves
-validate the whole file before replacing the stored file. Invalid input produces
-line-specific diagnostics, keeps the draft modified, and preserves the previous
-navigation snapshot. A failed :wq does not close the pane.
-
-While the pane is modified, next/prev use the saved snapshot. Adding marks,
-switching paths, and pane <CR> jumps require saving or discarding the draft first.
-Highlighting is hidden while the draft differs from the snapshot.
-
-To discard edits and reload the saved file, use :edit! in the pane. If another
-process changed the stored file, saving fails rather than overwriting it. Copy
-any draft edits to keep, :edit!, then reapply. With a clean/closed pane, opening
-the same path again also reloads it. External edit detection is content-based,
-not a multi-process locking protocol.
-
-The active mark is the last successfully navigated mark. Changing the ordered
-mark list on save clears it. Saving the same mark list or appending a mark
-preserves it. Opening a path resets it. Closing the pane leaves the path active.
+storage_dir             Independent cross-repository codepath storage.
+pane_width              Initial pane width, a positive integer in columns.
+StringerActive          Active-mark highlight, defaults to Visual.
 
 ==============================================================================
-FORMAT                                                   *stringer-format*
+MARK VIEW AND RECOVERY                                    *stringer-editing*
 
-Each <name>.stringer file contains JSON Lines: >
+The pane is noneditable. Its local mappings are:
+    <CR>    Jump to selected mark.
+    dd      Remove selected mark.
+    K / J   Move selected mark up/down; cursor follows the moved entry.
+    u       Undo the last mark change, persisting the restored state.
+    r       Prompt to rename the active codepath.
+    R       Reload from disk.
+    q       Close pane without deactivating the path.
+
+Display paths are relative to the Git root containing Neovim's working
+directory, falling back to that directory. Both .git directories and worktree
+.git files are recognized. Outside the project, paths under home use ~/;
+otherwise absolute paths are displayed. Changing working directory refreshes
+the view. Jumping across codebases does not change the display root.
+
+Append, remove, move, and undo save immediately. Failed writes leave the marks,
+pane, history and stored file unchanged. Reordering preserves the active entry;
+removing it clears the active mark until navigation or proximity selects another.
+Undo restores the previous mark list and active index.
+
+Undo history is in memory and clears when opening/reloading a path. Renaming
+preserves history but is not itself undone by u. There is no redo.
+
+External changes block mutations instead of being overwritten. Reload with R
+or :Stringer reload. Invalid files report record line numbers and preserve the
+last valid runtime state. Save/discard drafts in manually opened raw storage
+buffers first. Content comparison is not a multi-process locking protocol.
+
+==============================================================================
+FORMAT AND COMPATIBILITY                                  *stringer-format*
+
+Existing 0.1 paths load without migration. Storage remains JSON Lines: >
     {"type":"stringer","format_version":1,"mark_version":1}
     {"file":"/workspace/service/main.lua","line":42}
 <
-The header versions the complete format and mark format separately. A mark has
-an absolute file path and positive, one-based integer line number. Duplicate
-locations and header-only paths are valid. Blank record lines, extra fields,
-relative paths, malformed JSON, and unsupported versions are rejected. A normal
-final newline is valid. JSON escaping handles special filename characters.
+Format versions are independent of plugin releases. Marks require absolute
+paths and positive one-based integer line numbers. Duplicate marks and empty
+(header-only) paths are valid. Blank records, extra fields, relative paths,
+invalid JSON, and unsupported versions are rejected. Final newlines are valid.
 
-These are fixed line references: code edits do not relocate marks. Missing files
-and lines past EOF produce errors without changing the active mark. Files must
-have been saved before marking them; modified file buffers use the cursor's
-current line. Absolute references depend on the local filesystem layout.
+The pane no longer exposes raw JSON editing or :write. Use explicit mark actions.
 
-The active path and position are not automatically restored on restart. Use
-:Stringer open to reopen a saved path. Split-based code navigation, automatic
-location tracking, structured editing, and fish-eye view are future work.
+References are fixed: code edits do not relocate marks. Missing files and lines
+past EOF report errors without changing the active mark. Files must have been
+saved before marking; modified buffers record the current cursor line.
+
+Active path, position and undo history are not restored across restarts. Use
+:Stringer open. Split navigation, Tree-sitter-based selection, automatic mark
+relocation, and fish-eye view are deferred.
 
 ==============================================================================
 LUA API                                                  *stringer-api*
 
 require('stringer') exposes:
-    setup(opts)         Optional configuration; errors on invalid options.
-    new(name)           Create and activate.
-    open(name?)         Open by name, or launch a picker.
-    add()               Append current file/line.
-    show()              Show the pane.
-    next() / prev()     Navigate in saved order.
-    jump(index)         Jump to a one-based mark index.
+    setup(opts)
+    new(name?), open(name?), rename(name?), reload()
+    add(), show(), next(), prev(), jump(index)
+    remove(index?), move_up(index?), move_down(index?), undo()
 
-Operations return true or nil, error and notify on failure. open() without a name
-returns after launching the asynchronous picker, before selection completes.
+Indices are one-based. Omitted action indices use the selected/active mark.
+Operations return true or nil, error and notify failures. Prompting functions
+return before the asynchronous selection completes. setup errors on invalid
+options.
 
  vim:tw=78:ts=8:noet:ft=help:norl:

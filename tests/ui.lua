@@ -41,36 +41,29 @@ local ok, err = xpcall(function()
     _G.panewin = vim.api.nvim_get_current_win()
   ]], vim.fn.getcwd(), root, fixture)
 
-  input('2G<CR>')
+  input('3G<CR>')
   assert(lua('return vim.api.nvim_get_current_win() == _G.codewin'), 'Enter did not focus code')
   assert(lua('return vim.api.nvim_win_get_cursor(0)[1]') == 1, 'Wrong jump line')
   local visible = lua([[
     vim.cmd('redraw')
-    local marked = vim.fn.screenpos(_G.panewin, 2, 1)
-    local other = vim.fn.screenpos(_G.panewin, 3, 1)
+    local marked = vim.fn.screenpos(_G.panewin, 3, 1)
+    local other = vim.fn.screenpos(_G.panewin, 4, 1)
     return {
       vim.fn.screenstring(marked.row, marked.col),
       vim.fn.screenattr(marked.row, marked.col),
       vim.fn.screenattr(other.row, other.col),
     }
   ]])
-  assert(visible[1] == '{', 'Pane mark text not rendered')
+  assert(visible[1] == '1', 'Pane mark text not rendered')
   assert(visible[2] ~= visible[3], 'Active mark has no visible highlight')
 
   lua('assert(require("stringer").show())')
-  input('2Gddp')
-  assert(lua('return vim.bo.modified'), 'Reordering did not modify the pane')
-  assert(lua([[
-    local p = require('stringer.pane')
-    return #vim.api.nvim_buf_get_extmarks(0, p.namespace, 0, -1, {})
-  ]]) == 0, 'Dirty pane still highlights a saved index')
-  input('q')
-  assert(lua('return vim.api.nvim_get_current_win() == _G.panewin'), 'q discarded dirty pane')
-  input(':write<CR>')
-  assert(not lua('return vim.bo.modified'), 'Write did not save reorder')
+  input('3GJ')
+  assert(not lua('return vim.bo.modified'), 'Reordering left an unsaved draft')
+  assert(lua('return require("stringer.store").load("ui").marks[1].line') == 2, 'Reorder not persisted')
   assert(lua('return require("stringer.state").active.marks[1].line') == 2, 'Reorder not applied')
 
-  input('2G<CR>')
+  input('3G<CR>')
   assert(lua('return vim.api.nvim_win_get_cursor(0)[1]') == 2, 'Reordered jump failed')
   lua('assert(require("stringer").show())')
   input('q')
@@ -78,10 +71,14 @@ local ok, err = xpcall(function()
   lua('assert(require("stringer").show())')
   assert(lua('return #vim.api.nvim_list_wins()') == 2, 'Pane did not reopen')
 
-  input('2Gdd')
+  input('3Gdd')
+  assert(lua('return #require("stringer.store").load("ui").marks') == 2, 'Removal not persisted')
   input('u')
-  input(':write<CR>')
   assert(lua('return #require("stringer.state").active.marks') == 3, 'Undo did not restore mark')
+  assert(lua('return #require("stringer.store").load("ui").marks') == 3, 'Undo not persisted')
+  input('3G<CR>')
+  input('3G')
+  assert(lua('return require("stringer.state").active.index') == 3, 'Cursor movement did not select nearest mark')
 end, debug.traceback)
 
 vim.fn.jobstop(child)
@@ -90,5 +87,5 @@ if not ok then
   print(err)
   vim.cmd('cquit 1')
 end
-print('UI PASS: rendered highlight, pane focus, reorder/save, dirty close, reopen, undo')
+print('UI PASS: rendered highlight, cursor proximity, pane focus, immediate reorder/remove/undo, reopen')
 vim.cmd('qa!')

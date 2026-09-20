@@ -10,16 +10,15 @@ end
 
 local stringer = require('stringer')
 stringer._initialize()
-local commands = { 'new', 'open', 'show', 'add', 'next', 'prev' }
+local commands = { 'new', 'open', 'show', 'add', 'next', 'prev', 'rename', 'remove', 'move-up', 'move-down', 'undo', 'reload' }
 vim.api.nvim_create_user_command('Stringer', function(args)
   local subcommand, name = args.fargs[1], args.fargs[2]
   local valid = vim.tbl_contains(commands, subcommand)
-  if not valid or #args.fargs > 2 or (name and subcommand ~= 'new' and subcommand ~= 'open')
-    or (subcommand == 'new' and not name) then
-    vim.notify('Usage: Stringer new <name> | open [name] | show | add | next | prev', vim.log.levels.ERROR)
+  if not valid or #args.fargs > 2 or (name and subcommand ~= 'new' and subcommand ~= 'open' and subcommand ~= 'rename') then
+    vim.notify('Usage: Stringer new/open/rename [name] | show | add | next | prev | remove | move-up | move-down | undo | reload', vim.log.levels.ERROR)
     return
   end
-  stringer[subcommand](name)
+  stringer[(subcommand:gsub('-', '_'))](name)
 end, {
   nargs = '+',
   desc = 'Capture, edit, and navigate ordered codepaths',
