@@ -7,15 +7,36 @@ Version **0.2** requires **Neovim 0.10+**. Pure Lua, with no dependencies.
 
 ## Installation
 
-Use your plugin manager's local-directory support, or place this repository under
-`pack/plugins/start/stringer` in a Neovim package directory. With lazy.nvim:
+Install with lazy.nvim:
 
 ```lua
 {
-  dir = '/absolute/path/to/stringer',
+  'kostya-m-w/stringer.nvim',
   opts = {},
 }
 ```
+
+For example, this lazy.nvim configuration loads Stringer at startup and
+adds normal-mode shortcuts for capturing and navigating marks. Save it as
+`lua/plugins/stringer.lua` when using lazy.nvim's `{ import = 'plugins' }` setup:
+
+```lua
+return {
+  'kostya-m-w/stringer.nvim',
+  lazy = false,
+  opts = {},
+  keys = {
+    { '<leader>+', '<cmd>Stringer add<CR>', desc = 'Stringer: add location' },
+    { '<leader>s]', '<cmd>Stringer next<CR>', desc = 'Stringer: next location' },
+    { '<leader>s[', '<cmd>Stringer prev<CR>', desc = 'Stringer: previous location' },
+  },
+}
+```
+
+`lazy = false` keeps `:Stringer` available immediately, even with key-based loading
+triggers configured. Set `vim.g.mapleader` before initializing lazy.nvim; with
+`vim.g.mapleader = ' '`, the shortcuts are Space then `+`, Space then `s]`, and
+Space then `s[`.
 
 To try it from this checkout:
 
