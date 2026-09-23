@@ -1,0 +1,5 @@
+@ROOT@/gems/active_record/base.rb:2578:in `attributes='
+@ROOT@/gems/active_record/base.rb:2283:in `initialize'
+app/controllers/tasks_controller.rb:7:in `new'
+app/controllers/tasks_controller.rb:7:in `show'
+@ROOT@/gems/action_controller/base.rb:1253:in `send'

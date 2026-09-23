@@ -3,7 +3,7 @@
 Capture ordered codepaths and navigate them in Neovim. A codepath can span
 multiple repositories and contain multiple locations in the same file.
 
-Version **0.2** requires **Neovim 0.10+**. Pure Lua, with no dependencies.
+Version **0.3** requires **Neovim 0.10+**. Pure Lua, with no dependencies.
 
 ## Installation
 
@@ -76,8 +76,14 @@ require('stringer').setup({
 | `:Stringer next` / `prev` | Jump to the next/previous mark, wrapping at either end. |
 | `:Stringer remove` | Remove the selected mark. |
 | `:Stringer move-up` / `move-down` | Move the selected mark one position. |
-| `:Stringer undo` | Undo the last successful append, removal, or move. |
+| `:Stringer undo` | Undo the last successful mark change, including notes and skipping. |
 | `:Stringer reload` | Reload the active path from storage. |
+| `:Stringer skip` | Toggle skipping the selected mark during navigation. |
+| `:Stringer hide-skipped` | Hide/reveal skipped marks in the pane. |
+| `:Stringer note` | Edit the selected mark's multiline note. |
+| `:Stringer import [name]` | Import the whole buffer's stacktrace into a new codepath. |
+| `:Stringer import-report` | Show the most recent import's results and excluded frames. |
+| `:Stringer cancel-import` | Cancel pending source lookup or an import prompt. |
 
 In the pane, the selected mark is the row under its cursor. From code, actions
 use the active mark. Moving marks does not wrap at the ends; navigation does.
@@ -98,7 +104,7 @@ vim.keymap.set('n', '[s', '<cmd>Stringer prev<CR>')
 
 ## Active mark and navigation
 
-Moving the cursor in a marked code file selects its **nearest marked line**.
+Moving the cursor in a marked code file selects its **nearest enabled marked line**.
 Distance is measured in lines; there is no Tree-sitter dependency or maximum
 distance. If two entries are equally close, Stringer keeps the active entry when
 it is tied; otherwise it picks the earlier codepath entry. Repeated marks at the
@@ -107,7 +113,7 @@ same location remain independently navigable.
 The active mark is highlighted with `StringerActive` (linked to `Visual`) and a
 `>` sign. Moving the pane cursor selects an entry for actions without changing
 the active mark. In an unmarked file, the previous active mark remains active.
-With no active mark, next starts at the first entry and previous at the last.
+With no active mark, next starts at the first enabled entry and previous at the last.
 
 Navigation uses the current code window. From the pane, it uses the last focused
 code window in the current tab, falling back to another eligible code window.
@@ -126,6 +132,9 @@ The pane is a noneditable view, separate from the persisted file format:
 | `u` | Undo the last mark change and save the restored state. |
 | `r` | Prompt to rename the codepath. |
 | `R` | Reload the codepath from disk. |
+| `s` | Toggle skipped state and save immediately. |
+| `H` | Hide/reveal skipped marks without changing storage. |
+| `n` | Open the selected mark's multiline note editor. |
 | `q` | Close the pane; keep the codepath active. |
 
 Display paths use the Git root containing **Neovim's working directory**, falling
@@ -138,9 +147,79 @@ back to that working directory if no `.git` directory/file is found:
 Jumping across codebases does not change the display root. Changing Neovim's
 working directory refreshes the view. Stored paths remain absolute.
 
+## Skipped marks
+
+Skipped marks stay in the codepath but are excluded from next/previous navigation
+and nearest-line detection. They are dimmed with `StringerSkipped` (linked to
+`Comment`) and labeled `[skip]`. You can still jump to one explicitly with Enter.
+If every mark is skipped, navigation reports that there are no enabled marks.
+
+The header shows total, skipped, and hidden counts. `H` changes only the view;
+hidden marks remain stored. With filtering enabled, K/J move a mark before/after
+its adjacent visible neighbor, preserving the relative order of hidden marks.
+Visibility survives pane close/reopen and rename, but resets on path open/reload.
+
+## Multiline notes
+
+Press `n` on a mark to open a Markdown note editor. Use normal text editing, then
+`:write` to persist or `:wq` to save and close. Empty content removes the note.
+The pane previews the first nonempty line. `q` closes a saved note; use
+`:bwipeout!` to explicitly discard a draft. Opening another note never replaces
+an unsaved draft.
+
+A note save is one undoable mark change. If the mark list changes while the note
+is open (including reorder, skip, undo, or path reload), saving is rejected rather
+than applying the text to a possibly different mark. Copy the draft, discard its
+editor, reopen the intended mark's note, and paste it there. Navigation, hiding,
+and renaming do not invalidate the editor. Failed saves keep the draft modified.
+
+## Import stacktraces
+
+Paste a trace into any buffer, set Neovim's working directory inside the relevant
+project, and run:
+
+```vim
+:Stringer import request-failure
+```
+
+Omit the name to prompt. Input is the **whole current buffer**, including scratch,
+log, and terminal buffers. The source text and existing quickfix list are retained.
+Each import creates a new codepath; an existing name is never replaced.
+
+Supported initial formats:
+
+- Ruby: conventional `path.rb:line:in ...` and `from path.rb:line:in ...` frames.
+- JavaScript/TypeScript: V8/Node `at function (path:line:column)` or
+  `at path:line:column`. Local `.ts`/`.tsx` paths must already appear in the trace.
+- Java: standard `at package.Class.method(File.java:line)` frames.
+
+These formats print deepest calls first. Stringer reverses parsed frames so the
+outermost available caller appears at the top. Repeated locations and framework
+frames are preserved. Original frame text is stored separately from your notes
+and used as a preview until you add a note.
+
+Absolute local paths are used directly; relative paths resolve against the Git
+root containing the captured working directory, falling back to that directory.
+Local `file:///` URIs are accepted. Remote URLs and container path remapping are
+not supported. Java basename-only frames use a project-local `.java` index,
+narrowed by package path when possible; only unique matches are accepted. The
+index yields to Neovim during large searches and can be cancelled.
+
+Missing, ambiguous, native, and unsupported-location frames are excluded with
+source-line-specific reasons in the import report. A partial import is labeled
+as partial and opens its report automatically; reopen it with `import-report`.
+If no frames resolve, no codepath is created. Line numbers past EOF still use
+the normal stale-mark checks at navigation time.
+
+Use one conventional stack per buffer: chained/suppressed exceptions, elided Java
+chains, interrupted/multiple stacks, and outermost-first Ruby tracebacks are
+rejected rather than merged into a misleading codepath. Browser-specific trace
+formats and source-map reconstruction are outside this initial coverage.
+
 ## Persistence and recovery
 
-Append, remove, move, and undo save immediately. The in-memory marks and pane
+Append, remove, move, skip, and undo save immediately; notes save on `:write`.
+The in-memory marks and pane
 update only after the write succeeds. Moves preserve the active entry even when
 its index changes; removing the active entry clears it until proximity detection
 or navigation selects another. Undo restores the previous marks and active index.
@@ -155,21 +234,26 @@ produce errors with record line numbers and leave the previous valid state
 intact. Unsaved edits in a manually opened raw storage buffer must be saved or
 discarded first. External-edit checks are content-based, not multi-process locks.
 
-## Storage format and 0.1 compatibility
+## Storage format and compatibility
 
-Existing 0.1 codepaths work without migration. Each `<name>.stringer` file still
-contains a versioned JSON Lines header and one mark per line:
+Existing 0.1/0.2 paths load without rewriting. New paths and successful mutations
+use mark format v2. Each `<name>.stringer` file contains a JSON Lines header and
+one mark per physical line:
 
 ```json
-{"type":"stringer","format_version":1,"mark_version":1}
+{"type":"stringer","format_version":1,"mark_version":2}
 {"file":"/workspace/service/src/main.lua","line":42}
-{"file":"/workspace/library/src/client.lua","line":108}
+{"file":"/workspace/library/src/client.lua","line":108,"skipped":true,"note":"First line\nSecond line","frame":"original imported frame"}
 ```
 
 Format versions are independent of the plugin version. Absolute file paths and
 positive, one-based integer line numbers are required. Duplicate locations and
 header-only paths are valid. Invalid JSON, blank records, extra fields, relative
 paths, and unsupported versions are rejected. A normal final newline is valid.
+
+Optional v2 fields are boolean `skipped` and string `note`/`frame`; absent skipped
+means false. Multiline strings are JSON-escaped. Older Stringer releases reject
+mark format v2, so upgraded paths require Stringer 0.3+.
 
 Unlike 0.1, the pane is no longer raw JSON: editing text and `:write` have been
 replaced by explicit, immediately persisted mark actions.
@@ -182,11 +266,16 @@ replaced by explicit, immediately persisted mark actions.
 - `new(name?)`, `open(name?)`, `rename(name?)`, `reload()`
 - `add()`, `show()`, `next()`, `prev()`, `jump(index)`
 - `remove(index?)`, `move_up(index?)`, `move_down(index?)`, `undo()`
+- `skip(index?)`, `hide_skipped()`, `note(index?)`
+- `import(name?)`, `import_report()`, `cancel_import()`
 
-Indices are one-based. Omitted action indices use pane selection or the active
+Indices refer to the full stored mark list, including hidden entries, and are
+one-based. Omitted action indices use pane selection or the active
 mark. Operations return `true` or `nil, error` and notify on failure. Prompting
 operations return after launching an asynchronous prompt; cancelling is harmless.
-`setup` raises an error for invalid options.
+Import also returns before asynchronous lookup/prompts finish; completion and
+errors are reported through notifications and the import report. `setup` raises
+an error for invalid options.
 
 ## Current limits
 

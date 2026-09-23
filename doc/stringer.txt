@@ -1,6 +1,6 @@
 *stringer.txt*  Ordered codepaths for Neovim                         *stringer*
 
-Stringer 0.2 requires Neovim 0.10 or newer. No dependencies.
+Stringer 0.3 requires Neovim 0.10 or newer. No dependencies.
 
 ==============================================================================
 QUICK START                                                 *stringer-start*
@@ -33,6 +33,12 @@ COMMANDS                                                 *:Stringer*
 :Stringer move-down      Move selected mark one position down and save.
 :Stringer undo           Undo last append, removal, or move and save.
 :Stringer reload         Reload active codepath from disk; clear undo history.
+:Stringer skip           Toggle skipped state and save.
+:Stringer hide-skipped   Toggle visibility of skipped marks (view only).
+:Stringer note           Edit selected mark's multiline note.
+:Stringer import [name]  Import whole current buffer into a new codepath.
+:Stringer import-report  Show last import's results and excluded frames.
+:Stringer cancel-import  Cancel pending lookup or import prompt.
 
 Names use letters, numbers, hyphens, and underscores. Creating and renaming
 reject existing names. One codepath is active at a time. No global mappings
@@ -45,7 +51,7 @@ jump automatically. Closing its pane keeps the path active.
 ==============================================================================
 ACTIVE MARK AND NAVIGATION                                *stringer-navigation*
 
-The nearest marked line in the focused code file determines the active mark.
+The nearest enabled marked line in the focused code file determines the active mark.
 This updates on cursor movement and file/window focus changes. Equal-distance
 ties preserve the current entry if tied, otherwise choose the earlier entry
 in codepath order. No maximum distance or Tree-sitter integration is used.
@@ -82,6 +88,9 @@ The pane is noneditable. Its local mappings are:
     u       Undo the last mark change, persisting the restored state.
     r       Prompt to rename the active codepath.
     R       Reload from disk.
+    s       Toggle skipped state and save immediately.
+    H       Hide/reveal skipped marks.
+    n       Edit a multiline note.
     q       Close pane without deactivating the path.
 
 Display paths are relative to the Git root containing Neovim's working
@@ -90,7 +99,7 @@ directory, falling back to that directory. Both .git directories and worktree
 otherwise absolute paths are displayed. Changing working directory refreshes
 the view. Jumping across codebases does not change the display root.
 
-Append, remove, move, and undo save immediately. Failed writes leave the marks,
+Append, remove, move, skip, and undo save immediately. Failed writes leave the marks,
 pane, history and stored file unchanged. Reordering preserves the active entry;
 removing it clears the active mark until navigation or proximity selects another.
 Undo restores the previous mark list and active index.
@@ -104,12 +113,73 @@ last valid runtime state. Save/discard drafts in manually opened raw storage
 buffers first. Content comparison is not a multi-process locking protocol.
 
 ==============================================================================
+SKIPPED MARKS                                            *stringer-skipped*
+
+Skipped marks remain stored but are excluded from proximity and next/previous
+navigation. They display [skip] and StringerSkipped highlighting (Comment by
+default). Explicit Enter jumps are allowed. All-skipped navigation reports an
+error without looping. The header shows total, skipped, and hidden counts.
+
+Hiding is a view preference, preserved across pane close/reopen and rename, but
+reset on path open/reload. Filtered K/J moves a mark before/after its adjacent
+visible neighbor, preserving hidden entries' relative order. Hidden marks are
+never deleted by filtering. A hidden active mark is indicated in the header.
+
+==============================================================================
+MULTILINE NOTES                                          *stringer-notes*
+
+Use n or :Stringer note for a Markdown editor. :write saves; :wq saves and closes
+only on success. Empty content removes the note. The pane previews the first
+nonempty line. q closes a saved editor; :bwipeout! discards a draft explicitly.
+Opening another note will not replace an unsaved draft.
+
+Each save is an undoable mark mutation. If marks change while editing (including
+reordering, skipping, undo, or path reload), the editor refuses a stale save.
+Copy the draft, discard its editor, reopen the intended note, and paste it back.
+Navigation, view changes, and rename do not invalidate the draft. Failed saves
+preserve its modified flag and content.
+
+==============================================================================
+STACKTRACE IMPORT                                        *stringer-import*
+
+Paste one conventional trace into a buffer and run :Stringer import [name].
+The entire buffer is captured, including scratch/log/terminal buffers. Omit the
+name to prompt. Import creates a new path, retaining source text and quickfix.
+
+Supported syntax: conventional Ruby path:line:in and from frames; V8/Node
+JavaScript/TypeScript at function (path:line:column) or at path:line:column;
+standard Java at package.Class.method(File.java:line).
+
+Frames are reversed from deepest-first to outermost-available caller first.
+Duplicate and framework frames remain. The original frame text is stored as
+context separately from notes and shown as a fallback preview.
+
+Local absolute paths are used directly. Relative paths use the captured cwd Git
+root (or cwd if no Git root). Local file:/// URIs are accepted. Java basenames
+are found with a project-local .java index, narrowed by package when possible;
+only unique matches resolve. Large searches yield and support cancel-import.
+
+Missing/ambiguous sources, native frames and unsupported locations are reported
+with source line numbers. Partial imports are labeled and open a report; use
+import-report to reopen it. No resolved frames means no new file. Stored lines
+past EOF still fail at navigation time with the ordinary stale-mark error.
+
+Chained/suppressed exceptions, elided chains, interrupted/multiple stacks, and
+outermost-first Ruby tracebacks are rejected. Remote remapping, source maps,
+browser-specific traces and other import sources/destinations are deferred.
+TypeScript source locations must already be present in the trace.
+
+==============================================================================
 FORMAT AND COMPATIBILITY                                  *stringer-format*
 
-Existing 0.1 paths load without migration. Storage remains JSON Lines: >
-    {"type":"stringer","format_version":1,"mark_version":1}
-    {"file":"/workspace/service/main.lua","line":42}
+Existing 0.1/0.2 paths load without rewriting. New paths and the next successful
+mutation use mark version 2. Storage remains JSON Lines: >
+    {"type":"stringer","format_version":1,"mark_version":2}
+    {"file":"/workspace/service/main.lua","line":42,"note":"First\nSecond"}
 <
+Optional fields: boolean skipped, string note, string frame (import context).
+Missing skipped means false. Multiline strings are escaped in JSON, preserving
+one physical line per mark. Old plugin versions reject mark version 2.
 Format versions are independent of plugin releases. Marks require absolute
 paths and positive one-based integer line numbers. Duplicate marks and empty
 (header-only) paths are valid. Blank records, extra fields, relative paths,
@@ -133,10 +203,14 @@ require('stringer') exposes:
     new(name?), open(name?), rename(name?), reload()
     add(), show(), next(), prev(), jump(index)
     remove(index?), move_up(index?), move_down(index?), undo()
+    skip(index?), hide_skipped(), note(index?)
+    import(name?), import_report(), cancel_import()
 
-Indices are one-based. Omitted action indices use the selected/active mark.
+Indices address the full stored list, including hidden marks, and are one-based.
+Omitted action indices use the selected/active mark.
 Operations return true or nil, error and notify failures. Prompting functions
 return before the asynchronous selection completes. setup errors on invalid
-options.
+options. Import returns before asynchronous lookup/prompt completion; results
+are reported through notifications and the import report.
 
  vim:tw=78:ts=8:noet:ft=help:norl:

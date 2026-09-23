@@ -19,6 +19,7 @@ end
 
 function M.decode(lines)
   local marks, errors = {}, {}
+  local version
   local function problem(line, message)
     errors[#errors + 1] = { line = line, message = message }
   end
@@ -33,16 +34,27 @@ function M.decode(lines)
       if not keys_match(value, { type = true, format_version = true, mark_version = true })
         or value.type ~= 'stringer' then
         problem(i, 'Expected a Stringer header')
-      elseif value.format_version ~= 1 or value.mark_version ~= 1 then
-        problem(i, 'Unsupported version; expected format_version=1 and mark_version=1')
+      elseif value.format_version ~= 1 or (value.mark_version ~= 1 and value.mark_version ~= 2) then
+        problem(i, 'Unsupported version; expected format_version=1 and mark_version=1 or 2')
+      else
+        version = value.mark_version
       end
-    elseif not keys_match(value, { file = true, line = true })
+    elseif not keys_match(value, version == 2
+      and { file = true, line = true, skipped = true, note = true, frame = true }
+      or { file = true, line = true })
       or not M.absolute(value.file) or value.file:find('%z')
       or type(value.line) ~= 'number' or value.line < 1
-      or value.line == math.huge or value.line % 1 ~= 0 then
+      or value.line == math.huge or value.line % 1 ~= 0
+      or (value.skipped ~= nil and type(value.skipped) ~= 'boolean')
+      or (value.note ~= nil and type(value.note) ~= 'string')
+      or (value.frame ~= nil and type(value.frame) ~= 'string') then
       problem(i, 'Expected an absolute file path and a positive integer line number')
     else
-      marks[#marks + 1] = { file = vim.fs.normalize(value.file), line = value.line }
+      local mark = { file = vim.fs.normalize(value.file), line = value.line }
+      if value.skipped then mark.skipped = true end
+      if value.note and value.note ~= '' then mark.note = value.note end
+      if value.frame and value.frame ~= '' then mark.frame = value.frame end
+      marks[#marks + 1] = mark
     end
   end
   if #errors > 0 then
@@ -52,9 +64,16 @@ function M.decode(lines)
 end
 
 function M.encode(marks)
-  local lines = { '{"type":"stringer","format_version":1,"mark_version":1}' }
+  local lines = { '{"type":"stringer","format_version":1,"mark_version":2}' }
   for _, mark in ipairs(marks) do
-    lines[#lines + 1] = '{"file":' .. vim.json.encode(mark.file) .. ',"line":' .. tostring(mark.line) .. '}'
+    local text = '{"file":' .. vim.json.encode(mark.file) .. ',"line":' .. tostring(mark.line)
+    if mark.skipped then text = text .. ',"skipped":true' end
+    for _, key in ipairs({ 'note', 'frame' }) do
+      if mark[key] and mark[key] ~= '' then
+        text = text .. ',"' .. key .. '":' .. vim.json.encode(mark[key])
+      end
+    end
+    lines[#lines + 1] = text .. '}'
   end
   return lines
 end

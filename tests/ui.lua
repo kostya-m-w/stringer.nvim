@@ -79,6 +79,51 @@ local ok, err = xpcall(function()
   input('3G<CR>')
   input('3G')
   assert(lua('return require("stringer.state").active.index') == 3, 'Cursor movement did not select nearest mark')
+
+  lua('assert(require("stringer").show())')
+  input('3Gs')
+  assert(lua('return require("stringer.store").load("ui").marks[1].skipped'), 'Skip not persisted')
+  input('H')
+  assert(lua('return require("stringer.state").active.row_to_index[3]') == 2, 'Hidden row mapping incorrect')
+  input('3GJ')
+  assert(lua('return require("stringer.store").load("ui").marks[3].line') == 1, 'Filtered move wrong target')
+  input('u')
+  input('H')
+  input('3G<CR>')
+  assert(lua('return vim.api.nvim_win_get_cursor(0)[1]') == 2, 'Explicit skipped jump failed')
+  lua('assert(require("stringer").show())')
+  input('4Gn')
+  input('iFirst note<CR>Second paragraph<Esc>')
+  input(':write<CR>')
+  assert(lua('return require("stringer.store").load("ui").marks[2].note') == 'First note\nSecond paragraph',
+    'Multiline note not persisted')
+  input('q')
+  assert(lua('return vim.api.nvim_get_current_win() == require("stringer.pane").windows[vim.api.nvim_get_current_tabpage()]'),
+    'Note did not return to pane')
+  input('n')
+  input('A changed<Esc>')
+  lua('assert(require("stringer").move_down(2))')
+  assert(lua('return not pcall(vim.cmd, "wq")'), 'Stale note save unexpectedly succeeded')
+  assert(lua('return vim.bo.modified'), 'Failed note save lost draft')
+  lua('vim.cmd("bwipeout!")')
+
+  lua([[
+    vim.api.nvim_set_current_win(_G.codewin)
+    vim.cmd('enew')
+    local file = ...
+    vim.api.nvim_buf_set_lines(0, 0, -1, false, {
+      'Error: UI import fixture',
+      '    at deepest (' .. file .. ':3:1)',
+      '    at entry (' .. file .. ':1:1)',
+    })
+    vim.cmd('Stringer import imported-ui')
+    assert(require('stringer.state').active.name == 'imported-ui')
+    assert(require('stringer').show())
+  ]], fixture)
+  input('3G<CR>')
+  assert(lua('return vim.api.nvim_win_get_cursor(0)[1]') == 1, 'Imported entrypoint jump failed')
+  input(':Stringer next<CR>')
+  assert(lua('return vim.api.nvim_win_get_cursor(0)[1]') == 3, 'Imported downstream jump failed')
 end, debug.traceback)
 
 vim.fn.jobstop(child)
@@ -87,5 +132,5 @@ if not ok then
   print(err)
   vim.cmd('cquit 1')
 end
-print('UI PASS: rendered highlight, cursor proximity, pane focus, immediate reorder/remove/undo, reopen')
+print('UI PASS: highlight, proximity, filtered actions, skipped jumps, multiline notes, stale draft recovery, import navigation')
 vim.cmd('qa!')

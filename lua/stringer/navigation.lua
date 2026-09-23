@@ -13,14 +13,15 @@ function M.nearest(record)
   local line = vim.api.nvim_win_get_cursor(win)[1]
   local best, distance
   for i, mark in ipairs(record.marks) do
-    if mark.file == file then
+    if not mark.skipped and mark.file == file then
       local delta = math.abs(mark.line - line)
       if not distance or delta < distance or (delta == distance and i == record.index) then
         best, distance = i, delta
       end
     end
   end
-  return best or record.index
+  if best then return best end
+  if record.index and not record.marks[record.index].skipped then return record.index end
 end
 
 function M.eligible(win)

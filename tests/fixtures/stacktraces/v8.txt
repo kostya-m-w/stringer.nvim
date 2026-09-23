@@ -1,0 +1,4 @@
+TypeError: synthetic fixture
+    at fail (@ROOT@/src/worker.ts:12:7)
+    at @ROOT@/src/view.tsx:8:2
+    at async start (@ROOT@/src/main.js:3:1)

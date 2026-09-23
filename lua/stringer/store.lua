@@ -125,18 +125,22 @@ function M.write(file, text, expected)
   return true
 end
 
-function M.create(name)
+function M.create(name, marks)
   local file, err = M.path(name)
   if not file then
     return nil, err
   end
-  local text = codec.text(codec.encode({}))
+  marks = marks or {}
+  local lines = codec.encode(marks)
+  local valid, errors = codec.decode(lines)
+  if not valid then return nil, codec.error_message(errors) end
+  local text = codec.text(lines)
   local ok
   ok, err = M.write(file, text, nil)
   if not ok then
     return nil, err
   end
-  return { name = name, file = file, text = text, marks = {} }
+  return { name = name, file = file, text = text, marks = valid }
 end
 
 function M.rename(record, name)

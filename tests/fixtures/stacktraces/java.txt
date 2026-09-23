@@ -1,0 +1,3 @@
+java.lang.IllegalStateException: synthetic fixture
+    at app.Service$Worker.run(Service.java:42)
+    at app.Main.main(Main.java:10)

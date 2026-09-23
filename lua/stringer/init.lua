@@ -1,5 +1,5 @@
 local config = require('stringer.config')
-local codec = require('stringer.codec')
+local model = require('stringer.model')
 local store = require('stringer.store')
 local state = require('stringer.state')
 local navigation = require('stringer.navigation')
@@ -18,13 +18,7 @@ local function active()
   return state.active
 end
 
-local function clean(record)
-  local buf = record and vim.fn.bufnr(record.file)
-  if buf and buf ~= -1 and vim.bo[buf].modified then
-    return nil, 'Save or discard edits in the raw codepath file first'
-  end
-  return true
-end
+local clean = model.clean
 
 local function activate(record)
   local ok, err = clean(record)
@@ -99,17 +93,8 @@ function M.open(name)
 end
 
 local function persist(record, marks, index, selected, undoing)
-  local ok, err = clean(record)
+  local ok, err = model.persist(record, marks, index, selected, undoing)
   if not ok then return fail(err) end
-  local text = codec.text(codec.encode(marks))
-  ok, err = store.write(record.file, text, record.text)
-  if not ok then return fail(err) end
-  record.history = record.history or {}
-  if not undoing then
-    record.history[#record.history + 1] = { marks = record.marks, index = record.index }
-  end
-  record.marks, record.text, record.index = marks, text, index
-  pane.refresh(record, selected)
   return true
 end
 
@@ -176,17 +161,73 @@ local function move(direction, index)
   index, err = selection(record, index)
   if not index then return fail(err) end
   local target = index + direction
+  while record.hide_skipped and record.marks[target] and record.marks[target].skipped do
+    target = target + direction
+  end
   if target < 1 or target > #record.marks then return fail('Mark is already at that end of the codepath') end
   local marks = vim.deepcopy(record.marks)
-  marks[index], marks[target] = marks[target], marks[index]
+  local moved = table.remove(marks, index)
+  table.insert(marks, target, moved)
   local current = record.index
   if current == index then current = target
-  elseif current == target then current = index end
+  elseif current and index < target and current > index and current <= target then current = current - 1
+  elseif current and index > target and current >= target and current < index then current = current + 1 end
   return persist(record, marks, current, target)
 end
 
 function M.move_up(index) return move(-1, index) end
 function M.move_down(index) return move(1, index) end
+
+function M.skip(index)
+  local record, err = active()
+  if not record then return fail(err) end
+  index, err = selection(record, index)
+  if not index then return fail(err) end
+  local marks = vim.deepcopy(record.marks)
+  marks[index].skipped = not marks[index].skipped or nil
+  local current = record.index
+  if current == index and marks[index].skipped then current = nil end
+  return persist(record, marks, current, index)
+end
+
+function M.hide_skipped()
+  local record, err = active()
+  if not record then return fail(err) end
+  local selected = pane.selected(record)
+  record.hide_skipped = not record.hide_skipped
+  pane.refresh(record, selected)
+  return true
+end
+
+function M.note(index)
+  local record, err = active()
+  if not record then return fail(err) end
+  index, err = selection(record, index)
+  if not index then return fail(err) end
+  local ok
+  ok, err = require('stringer.notes').open(record, index)
+  if not ok then return fail(err) end
+  return true
+end
+
+function M.import(name)
+  return require('stringer.import').start(name, function(value, marks)
+    local ok, err = clean(state.active)
+    if not ok then return fail(err) end
+    local file
+    file, err = store.path(value)
+    if not file then return fail(err) end
+    ok, err = clean({ file = file })
+    if not ok then return fail(err) end
+    local record
+    record, err = store.create(value, marks)
+    if not record then return fail(err) end
+    return activate(record)
+  end)
+end
+
+function M.import_report() return require('stringer.import').show_report() end
+function M.cancel_import() return require('stringer.import').cancel() end
 
 function M.undo()
   local record, err = active()
@@ -273,10 +314,12 @@ local function step(direction)
   if #record.marks == 0 then
     return fail('The active codepath is empty')
   end
-  local current = navigation.nearest(record)
-  local index = current and ((current - 1 + direction) % #record.marks + 1)
-    or (direction == 1 and 1 or #record.marks)
-  return M.jump(index)
+  local current = navigation.nearest(record) or (direction == 1 and 0 or 1)
+  for offset = 1, #record.marks do
+    local index = (current - 1 + direction * offset) % #record.marks + 1
+    if not record.marks[index].skipped then return M.jump(index) end
+  end
+  return fail('The active codepath has no enabled marks')
 end
 
 function M.next()
@@ -291,6 +334,7 @@ function M._initialize()
   local group = vim.api.nvim_create_augroup('Stringer', { clear = true })
   local function highlights()
     vim.api.nvim_set_hl(0, 'StringerActive', { default = true, link = 'Visual' })
+    vim.api.nvim_set_hl(0, 'StringerSkipped', { default = true, link = 'Comment' })
   end
   highlights()
   vim.api.nvim_create_autocmd('ColorScheme', { group = group, callback = highlights })
