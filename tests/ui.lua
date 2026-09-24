@@ -41,13 +41,13 @@ local ok, err = xpcall(function()
     _G.panewin = vim.api.nvim_get_current_win()
   ]], vim.fn.getcwd(), root, fixture)
 
-  input('3G<CR>')
+  input('4G<CR>')
   assert(lua('return vim.api.nvim_get_current_win() == _G.codewin'), 'Enter did not focus code')
   assert(lua('return vim.api.nvim_win_get_cursor(0)[1]') == 1, 'Wrong jump line')
   local visible = lua([[
     vim.cmd('redraw')
     local marked = vim.fn.screenpos(_G.panewin, 3, 1)
-    local other = vim.fn.screenpos(_G.panewin, 4, 1)
+    local other = vim.fn.screenpos(_G.panewin, 5, 1)
     return {
       vim.fn.screenstring(marked.row, marked.col),
       vim.fn.screenattr(marked.row, marked.col),
@@ -92,7 +92,7 @@ local ok, err = xpcall(function()
   input('3G<CR>')
   assert(lua('return vim.api.nvim_win_get_cursor(0)[1]') == 2, 'Explicit skipped jump failed')
   lua('assert(require("stringer").show())')
-  input('4Gn')
+  input('5Gn')
   input('iFirst note<CR>Second paragraph<Esc>')
   input(':write<CR>')
   assert(lua('return require("stringer.store").load("ui").marks[2].note') == 'First note\nSecond paragraph',
@@ -100,6 +100,45 @@ local ok, err = xpcall(function()
   input('q')
   assert(lua('return vim.api.nvim_get_current_win() == require("stringer.pane").windows[vim.api.nvim_get_current_tabpage()]'),
     'Note did not return to pane')
+
+  lua([[
+    local s = require('stringer')
+    assert(s.jump(2))
+    vim.wo.number = true
+    vim.wo.signcolumn = 'yes:1'
+    vim.cmd('redraw')
+  ]])
+  local gutter_text = lua([[
+    local pos = vim.fn.screenpos(_G.codewin, 1, 1)
+    local winpos = vim.api.nvim_win_get_position(_G.codewin)
+    return vim.fn.screenstring(pos.row, winpos[2] + 1)
+  ]])
+  assert(gutter_text == 'N', 'Note-bearing source sign not rendered: ' .. gutter_text)
+  lua('assert(require("stringer").show())')
+  local note_row = lua('return require("stringer.state").active.ranges[2].location + 1')
+  assert(lua([[
+    local r = require('stringer.state').active
+    local b = require('stringer.pane').buffer(r)
+    return vim.api.nvim_buf_get_lines(b, r.ranges[2].location, r.ranges[2].last, false)[1]
+  ]]):find('First note', 1, true), 'Active note not expanded')
+  input(tostring(note_row) .. 'G<CR>')
+  assert(lua('return vim.api.nvim_win_get_cursor(0)[1]') == 1, 'Note row jump targeted wrong mark')
+  lua('assert(require("stringer").jump(3))')
+  assert(lua('local r = require("stringer.state").active; return r.ranges[2].last == r.ranges[2].location'),
+    'Old note section did not collapse')
+  lua([[
+    assert(require('stringer').jump(2))
+    assert(require('stringer').show())
+    vim.api.nvim_win_set_width(0, 24)
+  ]])
+  input('') -- allow resize/layout events to settle
+  assert(lua([[
+    local r = require('stringer.state').active
+    local p = require('stringer.pane')
+    local line = vim.api.nvim_buf_get_lines(p.buffer(r), r.ranges[2].location - 1, r.ranges[2].location, false)[1]
+    return line:find('code.lua:1', 1, true) ~= nil and vim.fn.strdisplaywidth(line) <= p.width(r)
+  ]]), 'Narrow pane hides useful filename ending')
+  input(tostring(lua('return require("stringer.state").active.index_to_row[2]')) .. 'G')
   input('n')
   input('A changed<Esc>')
   lua('assert(require("stringer").move_down(2))')
@@ -132,5 +171,5 @@ if not ok then
   print(err)
   vim.cmd('cquit 1')
 end
-print('UI PASS: highlight, proximity, filtered actions, skipped jumps, multiline notes, stale draft recovery, import navigation')
+print('UI PASS: two-line entries, inline notes, source gutter signs, resizing, filtered actions, note editing, import navigation')
 vim.cmd('qa!')

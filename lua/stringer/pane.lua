@@ -1,5 +1,7 @@
 local config = require('stringer.config')
 local state = require('stringer.state')
+local layout = require('stringer.layout')
+local labels = require('stringer.labels')
 local M = {
   buffers = {},
   windows = {},
@@ -49,32 +51,34 @@ function M.highlight(record)
     return
   end
   vim.api.nvim_buf_clear_namespace(buf, M.namespace, 0, -1)
-  for index, row in pairs(record.index_to_row or {}) do
-    if record.marks[index].skipped then
-      vim.api.nvim_buf_set_extmark(buf, M.namespace, row - 1, 0, { line_hl_group = 'StringerSkipped' })
+  for index, range in pairs(record.ranges or {}) do
+    for row = range.first, range.last do
+      local group = row > range.location and 'StringerNote'
+        or (record.marks[index].skipped and 'StringerSkipped' or nil)
+      if group then vim.api.nvim_buf_set_extmark(buf, M.namespace, row - 1, 0, { line_hl_group = group }) end
     end
   end
   if state.active == record and record.index and record.marks[record.index] then
-    local row = (record.index_to_row or {})[record.index]
-    if row then
-      vim.api.nvim_buf_set_extmark(buf, M.namespace, row - 1, 0, {
-        line_hl_group = 'StringerActive', sign_text = '>', sign_hl_group = 'StringerActive', priority = 110,
-      })
+    local range = (record.ranges or {})[record.index]
+    if range then
+      for row = range.first, range.location do
+        vim.api.nvim_buf_set_extmark(buf, M.namespace, row - 1, 0, {
+          line_hl_group = 'StringerActive', sign_text = row == range.first and '>' or nil,
+          sign_hl_group = 'StringerActive', priority = 110,
+        })
+      end
     end
   end
-  local skipped = 0
-  for _, mark in ipairs(record.marks) do if mark.skipped then skipped = skipped + 1 end end
-  local hidden = record.hide_skipped and skipped or 0
-  local active_hidden = state.active == record and record.index and record.hide_skipped
-    and record.marks[record.index] and record.marks[record.index].skipped
-  local header = ('Stringer: %s (%d marks, %d skipped, %d hidden)%s'):format(
-    record.name, #record.marks, skipped, hidden, active_hidden and ' [active hidden]' or '')
-  if vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1] ~= header then
-    vim.bo[buf].modifiable = true
-    vim.api.nvim_buf_set_lines(buf, 0, 1, false, { header })
-    vim.bo[buf].modified = false
-    vim.bo[buf].modifiable = false
+end
+
+function M.width(record)
+  local buf, width = M.buffer(record), nil
+  for _, win in ipairs(buf and vim.fn.win_findbuf(buf) or {}) do
+    local info = vim.fn.getwininfo(win)[1]
+    local available = math.max(1, vim.api.nvim_win_get_width(win) - (info and info.textoff or 0))
+    width = width and math.min(width, available) or available
   end
+  return width or math.max(1, config.options.pane_width - 2)
 end
 
 function M.refresh(record, selected)
@@ -82,33 +86,17 @@ function M.refresh(record, selected)
   if not buf then
     return
   end
-  local lines = {
-    ('Stringer: %s (%d marks)'):format(record.name, #record.marks),
-    '<CR> jump  dd remove  K/J move  s skip  H hide  n note  u undo  r rename  R reload  q close',
-  }
   local previous_rows = record.row_to_index or {}
   local cursors = {}
   for _, win in ipairs(vim.fn.win_findbuf(buf)) do
     local cursor = vim.api.nvim_win_get_cursor(win)
-    cursors[win] = { row = cursor[1], index = previous_rows[cursor[1]] }
+    local index = previous_rows[cursor[1]]
+    local range = index and (record.ranges or {})[index]
+    cursors[win] = { row = cursor[1], index = index, offset = range and cursor[1] - range.first or 0 }
   end
-  record.row_to_index, record.index_to_row = {}, {}
-  local root = M.project_root()
-  for i, mark in ipairs(record.marks) do
-    if not (record.hide_skipped and mark.skipped) then
-      local preview = mark.note or mark.frame
-      preview = preview and preview:match('[^\r\n]+')
-      local suffix = preview and ('  ' .. (mark.note and '[note] ' or '')
-        .. vim.fn.strtrans(vim.fn.strcharpart(preview, 0, 100))) or ''
-      lines[#lines + 1] = ('%d  %s%s:%d%s'):format(i, mark.skipped and '[skip] ' or '',
-        vim.fn.strtrans(M.display_path(mark.file, root)), mark.line, suffix)
-      record.row_to_index[#lines], record.index_to_row[i] = i, #lines
-    end
-  end
-  if #lines == 2 then
-    lines[#lines + 1] = #record.marks == 0 and '(No marks yet. Use :Stringer add from a code file.)'
-      or '(All marks hidden. Press H to reveal skipped marks.)'
-  end
+  local view = layout.build(record, M.width(record), labels.title, config.options.inline_notes and state.active == record)
+  local lines = view.lines
+  record.row_to_index, record.index_to_row, record.ranges = view.row_to_index, view.index_to_row, view.ranges
   vim.bo[buf].modifiable = true
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   vim.bo[buf].modified = false
@@ -125,6 +113,11 @@ function M.refresh(record, selected)
           if record.index_to_row[i] then row = record.index_to_row[i]; break end
         end
       end
+    end
+    local owning = row and record.row_to_index[row]
+    local range = owning and record.ranges[owning]
+    if range and not (selected and win == vim.api.nvim_get_current_win()) then
+      row = math.min(row + cursor.offset, range.last)
     end
     vim.api.nvim_win_set_cursor(win, { row or math.min(cursor.row, #lines), 0 })
   end

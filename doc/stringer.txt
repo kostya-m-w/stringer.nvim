@@ -1,6 +1,6 @@
 *stringer.txt*  Ordered codepaths for Neovim                         *stringer*
 
-Stringer 0.3 requires Neovim 0.10 or newer. No dependencies.
+Stringer 0.4 requires Neovim 0.10 or newer. No dependencies.
 
 ==============================================================================
 QUICK START                                                 *stringer-start*
@@ -72,11 +72,27 @@ Setup is optional: >lua
     require('stringer').setup({
       storage_dir = vim.fn.stdpath('data') .. '/stringer/paths',
       pane_width = 48,
+      gutter = true,
+      gutter_sign = 'o',
+      gutter_note_sign = 'N',
+      gutter_priority = 10,
+      inline_notes = true,
+      symbol_labels = true,
     })
 <
 storage_dir             Independent cross-repository codepath storage.
 pane_width              Initial pane width, a positive integer in columns.
+gutter                  Show source signs for the active codepath.
+gutter_sign             Ordinary-mark sign; one or two display cells.
+gutter_note_sign        Sign for a line with at least one noted mark.
+gutter_priority         Nonnegative sign priority; default 10.
+inline_notes            Automatically expand notes below the active entry.
+symbol_labels           Use imported frame/LSP titles when available.
 StringerActive          Active-mark highlight, defaults to Visual.
+StringerNote            Inline note highlight, defaults to Comment.
+StringerGutter          Ordinary source signs, defaults to Special.
+StringerGutterActive    Active source signs, defaults to Search.
+StringerGutterSkipped   All-skipped source signs, defaults to Comment.
 
 ==============================================================================
 MARK VIEW AND RECOVERY                                    *stringer-editing*
@@ -93,11 +109,21 @@ The pane is noneditable. Its local mappings are:
     n       Edit a multiline note.
     q       Close pane without deactivating the path.
 
-Display paths are relative to the Git root containing Neovim's working
-directory, falling back to that directory. Both .git directories and worktree
-.git files are recognized. Outside the project, paths under home use ~/;
-otherwise absolute paths are displayed. Changing working directory refreshes
-the view. Jumping across codebases does not change the display root.
+Each entry has two rows: a contextual title and a filename/line location.
+Locations use the shortest distinguishing trailing path suffix. Long paths are
+shortened from the left so their endings and line numbers remain useful. Widths
+are measured in display cells. Shared pane buffers use the narrowest visible
+pane's available width. Persisted paths stay absolute.
+
+Imported method/function labels are preferred when recognizable. Otherwise an
+already attached LSP may supply an enclosing function/method, including reliable
+class/module context from hierarchical document symbols. Filename is the
+fallback. No files are loaded and no language servers started just for labels.
+Flat declaration-only symbol results do not imply an enclosing method. Set
+symbol_labels=false for filename-only titles. Tree-sitter is not required.
+
+Both base rows and all note rows map to their owning mark. Enter, dd, K/J, s,
+and n work from any such row. Reflow preserves mark ownership under the cursor.
 
 Append, remove, move, skip, and undo save immediately. Failed writes leave the marks,
 pane, history and stored file unchanged. Reordering preserves the active entry;
@@ -129,15 +155,39 @@ never deleted by filtering. A hidden active mark is indicated in the header.
 MULTILINE NOTES                                          *stringer-notes*
 
 Use n or :Stringer note for a Markdown editor. :write saves; :wq saves and closes
-only on success. Empty content removes the note. The pane previews the first
-nonempty line. q closes a saved editor; :bwipeout! discards a draft explicitly.
-Opening another note will not replace an unsaved draft.
+only on success. Empty content removes the note. q closes a saved editor;
+:bwipeout! discards a draft explicitly. Opening another note will not replace
+an unsaved draft.
+
+The active mark's full note expands directly beneath its location row, preserving
+blank lines and wrapping long lines. Another active mark replaces this section;
+marks without notes show none. Pane cursor movement alone does not change which
+note is expanded. Hidden marks do not have orphaned note sections. Notes display
+read-only Markdown source; set inline_notes=false to disable automatic expansion.
+The separate note editor and its modified state are unaffected by reflow.
 
 Each save is an undoable mark mutation. If marks change while editing (including
 reordering, skipping, undo, or path reload), the editor refuses a stale save.
 Copy the draft, discard its editor, reopen the intended note, and paste it back.
 Navigation, view changes, and rename do not invalidate the draft. Failed saves
 preserve its modified flag and content.
+
+==============================================================================
+SOURCE GUTTER SIGNS                                      *stringer-gutter*
+
+Only the active codepath has source signs: o for ordinary marks and N if a mark
+on the line has a note. Multiple marks at one location share a sign. Active
+membership selects the active highlight; otherwise the group is dimmed only
+when all its marks are skipped. Hide-skipped affects the list, not source signs.
+
+Signs are placed only in loaded code buffers. Stale lines past EOF are not
+clamped. Signs are reconciled to the stored line numbers after source edits;
+they do not relocate persisted marks. Switching paths removes obsolete signs.
+
+Stringer respects existing signcolumn/statuscolumn settings and other plugin
+namespaces. Enable a signcolumn if your layout hides signs. Adjust gutter_priority
+or available sign columns to coexist with diagnostics/Git signs. Set gutter=false
+to disable source indicators.
 
 ==============================================================================
 STACKTRACE IMPORT                                        *stringer-import*
@@ -152,7 +202,7 @@ standard Java at package.Class.method(File.java:line).
 
 Frames are reversed from deepest-first to outermost-available caller first.
 Duplicate and framework frames remain. The original frame text is stored as
-context separately from notes and shown as a fallback preview.
+context separately from notes and supplies contextual titles when recognizable.
 
 Local absolute paths are used directly. Relative paths use the captured cwd Git
 root (or cwd if no Git root). Local file:/// URIs are accepted. Java basenames
@@ -171,6 +221,9 @@ TypeScript source locations must already be present in the trace.
 
 ==============================================================================
 FORMAT AND COMPATIBILITY                                  *stringer-format*
+
+Versions 0.3 and 0.4 share the same storage format. Rendering and symbol lookup
+do not mutate marks or create undo history.
 
 Existing 0.1/0.2 paths load without rewriting. New paths and the next successful
 mutation use mark version 2. Storage remains JSON Lines: >

@@ -4,6 +4,7 @@ local store = require('stringer.store')
 local state = require('stringer.state')
 local navigation = require('stringer.navigation')
 local pane = require('stringer.pane')
+local presentation = require('stringer.presentation')
 local M = {}
 
 local function fail(err)
@@ -31,10 +32,10 @@ local function activate(record)
   end
   local previous = state.active
   state.active = record
-  if previous then
+  if previous and previous.file ~= record.file then
     pane.highlight(previous)
   end
-  pane.highlight(record)
+  presentation.refresh(record)
   M.sync()
   return true
 end
@@ -126,7 +127,7 @@ function M.sync()
     local index = navigation.nearest(record)
     if index ~= record.index then
       record.index = index
-      pane.highlight(record)
+      presentation.refresh(record)
     end
   end
 end
@@ -195,7 +196,7 @@ function M.hide_skipped()
   if not record then return fail(err) end
   local selected = pane.selected(record)
   record.hide_skipped = not record.hide_skipped
-  pane.refresh(record, selected)
+  presentation.refresh(record, selected)
   return true
 end
 
@@ -271,7 +272,7 @@ function M.rename(name)
   local old_file = record.file
   record.file, record.name = file, name
   pane.rekey(record, old_file)
-  pane.refresh(record)
+  presentation.refresh(record)
   return true
 end
 
@@ -302,7 +303,7 @@ function M.jump(index)
   if not ok then
     return fail(err)
   end
-  pane.highlight(record)
+  presentation.refresh(record)
   return true
 end
 
@@ -335,6 +336,10 @@ function M._initialize()
   local function highlights()
     vim.api.nvim_set_hl(0, 'StringerActive', { default = true, link = 'Visual' })
     vim.api.nvim_set_hl(0, 'StringerSkipped', { default = true, link = 'Comment' })
+    vim.api.nvim_set_hl(0, 'StringerNote', { default = true, link = 'Comment' })
+    vim.api.nvim_set_hl(0, 'StringerGutter', { default = true, link = 'Special' })
+    vim.api.nvim_set_hl(0, 'StringerGutterActive', { default = true, link = 'Search' })
+    vim.api.nvim_set_hl(0, 'StringerGutterSkipped', { default = true, link = 'Comment' })
   end
   highlights()
   vim.api.nvim_create_autocmd('ColorScheme', { group = group, callback = highlights })
@@ -352,7 +357,18 @@ function M._initialize()
       end
     end,
   })
+  vim.api.nvim_create_autocmd({ 'BufReadPost', 'BufEnter', 'BufFilePost' }, {
+    group = group, callback = function(args) presentation.enter(args.buf) end,
+  })
+  vim.api.nvim_create_autocmd({ 'WinResized', 'VimResized', 'DirChanged' }, {
+    group = group, callback = function() presentation.queue_pane(state.active) end,
+  })
+  vim.api.nvim_create_autocmd({ 'LspAttach', 'LspDetach' }, {
+    group = group, callback = function(args) presentation.changed(args.buf) end,
+  })
   navigation.remember()
+  if state.active then presentation.refresh(state.active)
+  else require('stringer.gutter').refresh(nil) end
 end
 
 return M

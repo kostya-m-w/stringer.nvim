@@ -25,7 +25,7 @@ function M.persist(record, marks, index, selected, undoing)
   end
   record.marks, record.text, record.index = marks, text, index
   record.revision = (record.revision or 0) + 1
-  require('stringer.pane').refresh(record, selected)
+  require('stringer.presentation').refresh(record, selected)
   return true
 end
 

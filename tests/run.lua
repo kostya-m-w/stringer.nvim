@@ -44,7 +44,8 @@ local function reset()
   file, other = dir .. '/repo-a/a "quoted" file.lua', dir .. '/repo-b/b.lua'
   vim.fn.writefile({ 'one', 'two', 'three', 'four' }, file)
   vim.fn.writefile({ 'alpha', 'beta', 'gamma' }, other)
-  s.setup({ storage_dir = dir .. '/paths', pane_width = 48 })
+  s.setup({ storage_dir = dir .. '/paths', pane_width = 48, gutter = true, inline_notes = true,
+    symbol_labels = true, gutter_sign = 'o', gutter_note_sign = 'N', gutter_priority = 10 })
   messages = {}
 end
 local function test(name, fn)
@@ -139,13 +140,13 @@ test('pane is noneditable and navigation preserves the code window', function()
   yes(s.jump(1)); eq(vim.api.nvim_get_current_win(), codewin)
   eq(vim.api.nvim_win_get_buf(win), buf)
   local marks = vim.api.nvim_buf_get_extmarks(buf, pane.namespace, 0, -1, {})
-  eq(#marks, 1); eq(marks[1][2], pane.first_mark_line - 1)
+  eq(#marks, 2); eq(marks[1][2], pane.first_mark_line - 1)
 end)
 test('moving marks saves immediately and preserves active entry identity', function()
   local r = capture(); yes(s.jump(1)); yes(s.show())
   vim.api.nvim_win_set_cursor(0, { 3, 0 })
   yes(s.move_down()); eq(r.index, 2); eq(r.marks[2].line, 2)
-  eq(vim.api.nvim_win_get_cursor(0)[1], 4)
+  eq(vim.api.nvim_win_get_cursor(0)[1], 5)
   eq(store.load('demo').marks, r.marks)
   yes(s.move_up()); eq(r.index, 1)
   no(s.move_up(1)); no(s.move_down(3))
@@ -257,12 +258,12 @@ test('project paths use cwd Git root, including worktree .git files', function()
   eq(pane.display_path('/outside/home/file.lua'), '/outside/home/file.lua')
   eq(pane.display_path('/work/stringer-extra/a', '/work/stringer'), '/work/stringer-extra/a')
 end)
-test('cwd changes rerender the pane and navigation does not change display root', function()
+test('cwd changes and navigation retain readable location endings', function()
   local r = capture(); yes(s.show())
   vim.api.nvim_set_current_dir(dir .. '/repo-a')
-  assert(rows(r)[3]:find('1  a "quoted" file.lua:2', 1, true))
+  assert(rows(r)[4]:find('a "quoted" file.lua:2', 1, true))
   yes(s.jump(2)); yes(s.show())
-  assert(rows(r)[3]:find('1  a "quoted" file.lua:2', 1, true))
+  assert(rows(r)[4]:find('a "quoted" file.lua:2', 1, true))
 end)
 test('missing and stale targets preserve active state', function()
   local r = capture(); yes(s.jump(1))
@@ -326,7 +327,7 @@ test('skipped marks are excluded from proximity and bounded cyclic navigation', 
 end)
 test('hidden rows map actions correctly and filtered movement preserves hidden order', function()
   local r = capture(); yes(s.show()); yes(s.skip(2)); yes(s.hide_skipped())
-  eq(r.row_to_index[3], 1); eq(r.row_to_index[4], 3)
+  eq(r.row_to_index[3], 1); eq(r.row_to_index[4], 1); eq(r.row_to_index[5], 3)
   vim.api.nvim_win_set_cursor(0, { 3, 0 }); yes(s.move_down())
   eq(r.marks[1].file, other); eq(r.marks[1].skipped, true)
   eq(r.marks[2].line, 4); eq(r.marks[3].line, 2)
@@ -499,8 +500,9 @@ test('reloading a visible filtered path rebuilds rows for the new snapshot', fun
   local r = capture(); yes(s.show()); yes(s.skip(2)); yes(s.hide_skipped())
   vim.fn.writefile(codec.encode({ { file = other, line = 1, note = 'replacement' } }), r.file)
   yes(s.reload())
-  eq(state.active.row_to_index[3], 1); eq(state.active.row_to_index[4], nil)
-  assert(rows(state.active)[3]:find('replacement', 1, true))
+  eq(state.active.row_to_index[3], 1); eq(state.active.row_to_index[4], 1)
+  assert(rows(state.active)[3]:find('[note]', 1, true))
+  yes(s.jump(1)); assert(table.concat(rows(state.active), '\n'):find('replacement', 1, true))
   eq(state.active.hide_skipped, nil)
 end)
 test('Java indexing yields and can be cancelled without creating a path', function()
@@ -509,6 +511,196 @@ test('Java indexing yields and can be cancelled without creating a path', functi
   vim.cmd('enew'); vim.api.nvim_buf_set_lines(0, 0, -1, false, { 'at pkg.File1.main(File1.java:1)' })
   yes(s.import('cancelled')); yes(s.cancel_import()); vim.wait(30)
   no(store.load('cancelled')); eq(state.active, nil)
+end)
+
+test('two-line layout preserves suffixes, Unicode widths, and row ownership', function()
+  local layout = require('stringer.layout')
+  local r = { name = 'layout', index = 1, marks = {
+    { file = '/one/controllers/任务_controller.rb', line = 123, note = 'alpha\n\nlong words long words long words' },
+    { file = '/two/models/任务_controller.rb', line = 8 },
+  } }
+  local suffixes = layout.suffixes(r.marks)
+  eq(suffixes[r.marks[1].file], 'controllers/任务_controller.rb')
+  eq(suffixes[r.marks[2].file], 'models/任务_controller.rb')
+  for _, width in ipairs({ 1, 4, 12, 24, 48 }) do
+    local view = layout.build(r, width, function() return 'VeryLongEnclosingFunction' end, true)
+    for row = 3, #view.lines do
+      assert(vim.fn.strdisplaywidth(view.lines[row]) <= width, view.lines[row])
+      assert(view.row_to_index[row])
+    end
+    eq(view.row_to_index[view.ranges[1].location], 1)
+    eq(view.row_to_index[view.ranges[1].last], 1)
+    if width >= 12 then assert(view.lines[4]:sub(-4) == ':123') end
+  end
+end)
+test('inline notes follow the active mark and preserve selection across reflow', function()
+  local r = capture()
+  local marks = vim.deepcopy(r.marks)
+  marks[1].note, marks[2].note = 'First\n\nMore', 'Second'
+  yes(require('stringer.model').persist(r, marks, 1))
+  yes(s.show()); yes(s.jump(1)); yes(s.show())
+  eq(r.ranges[1].last - r.ranges[1].location, 3)
+  vim.api.nvim_win_set_cursor(0, { r.index_to_row[3] + 1, 0 })
+  local win = vim.api.nvim_get_current_win()
+  r.index = 2; require('stringer.presentation').refresh(r)
+  eq(pane.selected(r), 3); eq(vim.api.nvim_get_current_win(), win)
+  eq(r.ranges[1].last, r.ranges[1].location)
+  eq(r.ranges[2].last, r.ranges[2].location + 1)
+  vim.api.nvim_win_set_cursor(0, { r.ranges[2].last, 0 }); eq(pane.selected(r), 2)
+  yes(s.remove()); eq(#r.marks, 2); eq(r.marks[2].line, 4)
+end)
+test('automatic note refresh does not modify an open note draft', function()
+  local r = capture(); yes(s.note(1))
+  local editor = require('stringer.notes').editor
+  vim.api.nvim_buf_set_lines(editor.buf, 0, -1, false, { 'unsaved draft' })
+  local revision = r.revision
+  r.index = 2; require('stringer.presentation').refresh(r)
+  eq(vim.bo[editor.buf].modified, true)
+  eq(vim.api.nvim_buf_get_lines(editor.buf, 0, -1, false), { 'unsaved draft' })
+  eq(r.revision, revision); yes(require('stringer.notes').save())
+  eq(r.marks[1].note, 'unsaved draft')
+end)
+test('shared pane uses narrowest visible width without losing selected mark', function()
+  local r = capture(); yes(s.show())
+  local first = vim.api.nvim_get_current_win()
+  vim.api.nvim_win_set_cursor(first, { r.index_to_row[2] + 1, 0 })
+  vim.cmd('tabnew'); yes(s.show())
+  local second = vim.api.nvim_get_current_win()
+  vim.api.nvim_win_set_width(second, 22)
+  require('stringer.presentation').refresh(r)
+  eq(r.row_to_index[vim.api.nvim_win_get_cursor(first)[1]], 2)
+  local available = vim.api.nvim_win_get_width(second) - vim.fn.getwininfo(second)[1].textoff
+  assert(pane.width(r) <= available)
+  for _, range in pairs(r.ranges) do assert(vim.fn.strdisplaywidth(rows(r)[range.location]) <= available) end
+end)
+
+local function signs(buf)
+  local result = {}
+  for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(buf, require('stringer.gutter').namespace, 0, -1, { details = true })) do
+    result[mark[2] + 1] = mark[4]
+  end
+  return result
+end
+test('source signs aggregate duplicate notes, active and mixed skipped states', function()
+  local r = capture()
+  local marks = vim.deepcopy(r.marks)
+  marks[1].skipped, marks[1].note = true, 'note'
+  marks[4] = { file = file, line = 2 }
+  yes(require('stringer.model').persist(r, marks, 4))
+  local buf = vim.fn.bufnr(file)
+  eq(signs(buf)[2].sign_text:match('^%S+'), 'N')
+  eq(signs(buf)[2].sign_hl_group, 'StringerGutterActive')
+  r.index = 3; require('stringer.presentation').refresh(r)
+  eq(signs(buf)[2].sign_hl_group, 'StringerGutter')
+  yes(s.skip(4)); eq(signs(buf)[2].sign_hl_group, 'StringerGutterSkipped')
+  yes(s.undo()); eq(signs(buf)[2].sign_hl_group, 'StringerGutter')
+  yes(s.new('empty')); eq(signs(buf), {})
+end)
+test('signs retain fixed stored lines after edits and leave other namespaces alone', function()
+  local r = capture(); local buf = vim.fn.bufnr(file)
+  local text = r.text
+  local ns = vim.api.nvim_create_namespace('test.other-sign')
+  vim.api.nvim_buf_set_extmark(buf, ns, 1, 0, { sign_text = 'X', priority = 100 })
+  vim.api.nvim_buf_set_lines(buf, 0, 0, false, { 'inserted' })
+  yes(vim.wait(500, function() return signs(buf)[2] ~= nil and signs(buf)[4] ~= nil end, 5))
+  eq(#vim.api.nvim_buf_get_extmarks(buf, ns, 0, -1, {}), 1)
+  eq(r.text, text); eq(store.read(r.file), text)
+  vim.api.nvim_buf_set_lines(buf, 1, -1, false, {})
+  yes(vim.wait(500, function() return next(signs(buf)) == nil end, 5))
+end)
+test('source unload and reload recreate only the active codepath indicators', function()
+  capture(); local buf = vim.fn.bufnr(file)
+  vim.api.nvim_buf_delete(buf, { unload = true, force = true })
+  yes(s.new('empty'))
+  edit(file)
+  eq(signs(vim.api.nvim_get_current_buf()), {})
+  yes(s.open('demo'))
+  assert(signs(vim.api.nvim_get_current_buf())[2])
+end)
+test('disabled UI options leave storage and other editor layout settings unchanged', function()
+  local r = capture(); local buf = vim.fn.bufnr(file)
+  local signcolumn = vim.wo.signcolumn
+  s.setup({ gutter = false, inline_notes = false, symbol_labels = false })
+  eq(signs(buf), {}); eq(vim.wo.signcolumn, signcolumn)
+  local marks = vim.deepcopy(r.marks); marks[1].note = 'Hidden inline note'
+  yes(require('stringer.model').persist(r, marks, 1)); yes(s.show())
+  eq(r.ranges[1].last, r.ranges[1].location)
+  no(pcall(s.setup, { gutter_sign = 'too wide' }))
+end)
+test('frame labels retain distinct Ruby contexts and parse V8 and Java titles', function()
+  local labels = require('stringer.labels')
+  eq(labels.frame("app/task.rb:7:in `show'"), 'show')
+  eq(labels.frame("app/task.rb:7:in `new'"), 'new')
+  eq(labels.frame('at async main (/app/main.ts:2:3)'), 'async main')
+  eq(labels.frame('at module/app.Service.run(Service.java:4)'), 'app.Service.run')
+  eq(labels.frame('at /app/main.ts:2:3'), nil)
+end)
+local function symbol(name, kind, start_line, end_line, end_col, children)
+  return { name = name, kind = kind, range = {
+    start = { line = start_line, character = 0 }, ['end'] = { line = end_line, character = end_col or 0 },
+  }, children = children }
+end
+test('enclosing symbols choose nested methods and respect end-exclusive ranges', function()
+  local labels = require('stringer.labels')
+  local symbols = { symbol('Service', 5, 0, 20, 0, {
+    symbol('run', 6, 2, 10, 0, { symbol('nested', 12, 4, 6, 0) }),
+  }) }
+  eq(labels.enclosing(symbols, 3), 'Service.run')
+  eq(labels.enclosing(symbols, 5), 'Service.nested')
+  eq(labels.enclosing(symbols, 6), 'Service.run')
+  eq(labels.enclosing(symbols, 10), nil)
+  eq(labels.enclosing({ { name = 'flat', kind = 6, location = {} } }, 2), nil)
+end)
+test('LSP title cache coalesces requests and rejects stale edit responses', function()
+  local r = capture(); local buf = vim.fn.bufnr(file)
+  local labels = require('stringer.labels')
+  local original = vim.lsp.get_clients
+  local callbacks, requests = {}, 0
+  local client = { id = 7 }
+  client.supports_method = function() return true end
+  client.request = function(...)
+    local args = { ... }
+    local callback = args[vim.fn.has('nvim-0.11') == 1 and 4 or 3]
+    requests = requests + 1; callbacks[#callbacks + 1] = callback
+    return true, requests
+  end
+  local ok, err = pcall(function()
+    vim.lsp.get_clients = function() return { client } end
+    labels.invalidate(buf)
+    labels.request(buf, function() end); labels.request(buf, function() end); eq(requests, 1)
+    vim.api.nvim_buf_set_lines(buf, 0, 1, false, { 'edit' })
+    callbacks[1](nil, { symbol('stale', 12, 0, 20) })
+    eq(labels.title(r.marks[1]), vim.fs.basename(file))
+    labels.request(buf, function() end)
+    callbacks[#callbacks](nil, { symbol('current', 12, 0, 20) })
+    eq(labels.title(r.marks[1]), 'current')
+    vim.lsp.get_clients = function() return {} end
+    labels.request(buf, function() end)
+    eq(labels.title(r.marks[1]), vim.fs.basename(file))
+  end)
+  vim.lsp.get_clients = original; yes(ok, err)
+end)
+test('delayed LSP results do not redraw an unrelated active path or move focus', function()
+  capture(); local buf = vim.fn.bufnr(file)
+  local labels = require('stringer.labels')
+  local original, callback = vim.lsp.get_clients, nil
+  local client = { id = 8, supports_method = function() return true end }
+  client.request = function(...)
+    local args = { ... }; callback = args[vim.fn.has('nvim-0.11') == 1 and 4 or 3]
+    return true, 1
+  end
+  local ok, err = pcall(function()
+    vim.lsp.get_clients = function() return { client } end
+    labels.invalidate(buf)
+    require('stringer.presentation').labels(buf, state.active)
+    assert(callback)
+    yes(s.new('unrelated')); yes(s.show())
+    local win, before = vim.api.nvim_get_current_win(), rows(state.active)
+    callback(nil, { symbol('late', 12, 0, 20) }); vim.wait(20)
+    eq(state.active.name, 'unrelated'); eq(rows(state.active), before)
+    eq(vim.api.nvim_get_current_win(), win)
+  end)
+  vim.lsp.get_clients = original; yes(ok, err)
 end)
 
 vim.api.nvim_set_current_dir(cwd)

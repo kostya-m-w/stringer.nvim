@@ -3,7 +3,7 @@
 Capture ordered codepaths and navigate them in Neovim. A codepath can span
 multiple repositories and contain multiple locations in the same file.
 
-Version **0.3** requires **Neovim 0.10+**. Pure Lua, with no dependencies.
+Version **0.4** requires **Neovim 0.10+**. Pure Lua, with no dependencies.
 
 ## Installation
 
@@ -50,6 +50,12 @@ Setup is optional. Defaults:
 require('stringer').setup({
   storage_dir = vim.fn.stdpath('data') .. '/stringer/paths',
   pane_width = 48,
+  gutter = true,
+  gutter_sign = 'o',
+  gutter_note_sign = 'N',
+  gutter_priority = 10,
+  inline_notes = true,
+  symbol_labels = true,
 })
 ```
 
@@ -137,15 +143,52 @@ The pane is a noneditable view, separate from the persisted file format:
 | `n` | Open the selected mark's multiline note editor. |
 | `q` | Close the pane; keep the codepath active. |
 
-Display paths use the Git root containing **Neovim's working directory**, falling
-back to that working directory if no `.git` directory/file is found:
+Each mark now has two rows: a contextual title, then a readable location ending
+in its filename and line number. Paths use the shortest trailing suffix that
+distinguishes files in the active path. Long locations are shortened from the
+left, preserving the useful ending rather than the directory prefix.
 
-- Inside this project: `lua/stringer/init.lua:42`.
-- Elsewhere under your home: `~/workspace/other/main.lua:10`.
-- Otherwise: `/absolute/path/main.lua:10`.
+```text
+3 [note] TasksController.show
+   controllers/tasks_controller.rb:7
+   │ Builds the task before rendering.
+   │ Check behavior when the owner is missing.
+4 Task.initialize
+   models/task.rb:23
+```
 
-Jumping across codebases does not change the display root. Changing Neovim's
-working directory refreshes the view. Stored paths remain absolute.
+Imported marks use their recorded method/function label when recognizable.
+Otherwise Stringer can obtain the enclosing method/function from hierarchical
+document symbols supplied by an already attached LSP server. It includes class
+or module context when available, and falls back to the filename. No server is
+started and no file is loaded just to obtain labels. Set `symbol_labels = false`
+for filename-only titles. Tree-sitter is not required.
+
+Both entry rows and any expanded note rows belong to the same mark: Enter, dd,
+K/J, s, and n work from any of them. Layout adapts to pane width and handles
+Unicode display widths. A pane buffer shared by windows uses the narrowest
+visible pane's available width. Stored paths remain absolute and unchanged.
+
+## Source gutter indicators
+
+Marks in the **active codepath only** have signs beside source line numbers:
+`o` for ordinary marks, `N` if a mark on that line has a note. Active marks use
+`StringerGutterActive`; ordinary and all-skipped groups use `StringerGutter` and
+`StringerGutterSkipped`. Default links are `Search`, `Special`, and `Comment`.
+
+Multiple marks at the same source line share one sign. Any note makes it a note
+sign; it is dimmed only if all marks on that line are skipped. Hiding skipped
+marks in the list does not remove their source signs. Signs appear only in loaded
+code buffers, and out-of-range marks are not clamped onto unrelated lines.
+
+Stringer respects existing signcolumn/statuscolumn settings and other plugins'
+namespaces. If signs are hidden by your layout, enable a signcolumn; if they
+compete with diagnostics or Git signs, adjust `gutter_priority` or the available
+sign columns. Sign text must occupy one or two display cells. Set `gutter = false`
+to disable these indicators.
+
+These remain fixed line references: signs are reconciled to the stored lines
+after edits, not used to silently relocate persisted marks.
 
 ## Skipped marks
 
@@ -163,7 +206,14 @@ Visibility survives pane close/reopen and rename, but resets on path open/reload
 
 Press `n` on a mark to open a Markdown note editor. Use normal text editing, then
 `:write` to persist or `:wq` to save and close. Empty content removes the note.
-The pane previews the first nonempty line. `q` closes a saved note; use
+The active mark's full note expands directly below its location row, wrapping
+long lines and preserving blank lines. It collapses when another mark becomes
+active; the new mark's note appears if present. Moving the pane cursor alone does
+not change the active mark. Hidden marks have no orphaned note section. Inline
+notes display Markdown source as read-only text with `StringerNote` highlighting
+(default `Comment`); set `inline_notes = false` to disable automatic expansion.
+
+The separate editor and its drafts are unaffected by automatic reflow. `q` closes a saved note; use
 `:bwipeout!` to explicitly discard a draft. Opening another note never replaces
 an unsaved draft.
 
@@ -196,7 +246,7 @@ Supported initial formats:
 These formats print deepest calls first. Stringer reverses parsed frames so the
 outermost available caller appears at the top. Repeated locations and framework
 frames are preserved. Original frame text is stored separately from your notes
-and used as a preview until you add a note.
+and supplies contextual titles when recognizable.
 
 Absolute local paths are used directly; relative paths resolve against the Git
 root containing the captured working directory, falling back to that directory.
@@ -239,6 +289,9 @@ discarded first. External-edit checks are content-based, not multi-process locks
 Existing 0.1/0.2 paths load without rewriting. New paths and successful mutations
 use mark format v2. Each `<name>.stringer` file contains a JSON Lines header and
 one mark per physical line:
+
+Version 0.4 uses the same storage format as 0.3; gutter signs, labels, and layout
+are transient presentation state, not mark mutations.
 
 ```json
 {"type":"stringer","format_version":1,"mark_version":2}
