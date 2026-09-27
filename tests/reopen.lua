@@ -5,6 +5,7 @@ assert(stringer.open('demo'))
 local marks = require('stringer.state').active.marks
 assert(marks[1].note == 'Persistent note\nSecond line')
 assert(marks[3].skipped == true)
+assert(marks[1].snapshot == 'two')
 assert(stringer.next())
 assert(vim.api.nvim_buf_get_name(0) == vim.env.STRINGER_REOPEN_FILE)
 assert(vim.api.nvim_win_get_cursor(0)[1] == 2)

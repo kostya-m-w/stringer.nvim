@@ -41,7 +41,7 @@ function M.refresh(record, only_buf)
             local hl = group.active and 'StringerGutterActive'
               or (group.skipped and 'StringerGutterSkipped' or 'StringerGutter')
             vim.api.nvim_buf_set_extmark(buf, M.namespace, line - 1, 0, {
-              sign_text = group.note and config.options.gutter_note_sign or config.options.gutter_sign,
+              sign_text = config.options.gutter_sign,
               sign_hl_group = hl, priority = config.options.gutter_priority,
             })
             M.buffers[buf] = true

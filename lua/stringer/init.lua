@@ -93,6 +93,33 @@ function M.open(name)
   return activate(record)
 end
 
+function M.copy(name)
+  local record, err = active()
+  if not record then return fail(err) end
+  local revision = record.revision or 0
+  local function create(value)
+    if not value or value == '' then return true end
+    if state.active ~= record or (record.revision or 0) ~= revision then
+      return fail('Codepath changed while naming its copy; retry the copy')
+    end
+    local ok, problem = clean(record)
+    if not ok then return fail(problem) end
+    local file
+    file, problem = store.path(value)
+    if not file then return fail(problem) end
+    ok, problem = clean({ file = file })
+    if not ok then return fail(problem) end
+    local copied
+    copied, problem = store.copy(record, value)
+    if not copied then return fail(problem) end
+    vim.notify('Stringer: copied ' .. record.name .. ' to ' .. value .. ' (original remains active)')
+    return true
+  end
+  if name then return create(name) end
+  vim.ui.input({ prompt = 'Copy codepath to: ' }, create)
+  return true
+end
+
 local function persist(record, marks, index, selected, undoing)
   local ok, err = model.persist(record, marks, index, selected, undoing)
   if not ok then return fail(err) end
@@ -141,6 +168,37 @@ local function selection(record, index)
     return nil, 'Select a mark first'
   end
   return index
+end
+
+function M.refresh_snapshot(index)
+  local record, err = active()
+  if not record then return fail(err) end
+  index, err = selection(record, index)
+  if not index then return fail(err) end
+  local revision, mark = record.revision or 0, record.marks[index]
+  local completed, success, problem = false, nil, nil
+  require('stringer.source').read(mark.file, { mark.line }, function(values)
+    completed = true
+    if state.active ~= record or (record.revision or 0) ~= revision then
+      success, problem = fail('Marks changed while capturing source; retry snapshot refresh')
+      return
+    end
+    local current = values[mark.line]
+    if current.status ~= 'ok' then
+      success, problem = fail(current.message or 'Source is unavailable')
+      return
+    end
+    if mark.snapshot == current.text then
+      presentation.refresh(record)
+      success = true
+      return
+    end
+    local marks = vim.deepcopy(record.marks)
+    marks[index].snapshot = current.text
+    success, problem = persist(record, marks, record.index, index)
+  end, { force = true })
+  if completed then return success, problem end
+  return true -- Disk reads complete asynchronously; errors are notified.
 end
 
 function M.remove(index)
@@ -287,6 +345,7 @@ function M.show()
   if not ok then
     return fail(err)
   end
+  presentation.sources(record, true)
   return true
 end
 
@@ -337,9 +396,9 @@ function M._initialize()
     vim.api.nvim_set_hl(0, 'StringerActive', { default = true, link = 'Visual' })
     vim.api.nvim_set_hl(0, 'StringerSkipped', { default = true, link = 'Comment' })
     vim.api.nvim_set_hl(0, 'StringerNote', { default = true, link = 'Comment' })
-    vim.api.nvim_set_hl(0, 'StringerGutter', { default = true, link = 'Special' })
-    vim.api.nvim_set_hl(0, 'StringerGutterActive', { default = true, link = 'Search' })
-    vim.api.nvim_set_hl(0, 'StringerGutterSkipped', { default = true, link = 'Comment' })
+    vim.api.nvim_set_hl(0, 'StringerGutter', { default = true, fg = '#e5c07b', ctermfg = 3 })
+    vim.api.nvim_set_hl(0, 'StringerGutterActive', { default = true, fg = '#e5c07b', ctermfg = 3, bold = true })
+    vim.api.nvim_set_hl(0, 'StringerGutterSkipped', { default = true, fg = '#a08040', ctermfg = 3 })
   end
   highlights()
   vim.api.nvim_create_autocmd('ColorScheme', { group = group, callback = highlights })
@@ -363,8 +422,11 @@ function M._initialize()
   vim.api.nvim_create_autocmd({ 'WinResized', 'VimResized', 'DirChanged' }, {
     group = group, callback = function() presentation.queue_pane(state.active) end,
   })
-  vim.api.nvim_create_autocmd({ 'LspAttach', 'LspDetach' }, {
+  vim.api.nvim_create_autocmd({ 'BufWritePost', 'FileChangedShellPost' }, {
     group = group, callback = function(args) presentation.changed(args.buf) end,
+  })
+  vim.api.nvim_create_autocmd('FocusGained', {
+    group = group, callback = function() if state.active then presentation.sources(state.active, true) end end,
   })
   navigation.remember()
   if state.active then presentation.refresh(state.active)

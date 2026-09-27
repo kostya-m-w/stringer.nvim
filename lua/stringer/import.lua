@@ -1,5 +1,6 @@
 local parsers = require('stringer.import.parsers')
 local resolver = require('stringer.import.resolve')
+local source = require('stringer.source')
 local M = {}
 
 local function fail(err)
@@ -30,8 +31,8 @@ end
 
 function M.start(name, commit)
   M.cancel()
-  local source = vim.api.nvim_get_current_buf()
-  local lines = vim.api.nvim_buf_get_lines(source, 0, -1, false)
+  local source_buf = vim.api.nvim_get_current_buf()
+  local lines = vim.api.nvim_buf_get_lines(source_buf, 0, -1, false)
   local root = require('stringer.pane').project_root()
   local formats = parsers.detect(lines)
   if #formats == 0 then return fail('No Ruby, V8 JavaScript/TypeScript, or Java frames found') end
@@ -62,6 +63,7 @@ function M.start(name, commit)
         M.show_report()
         return
       end
+      local warnings = 0
       local function save(value)
         if token.cancelled then return end
         finish_pending()
@@ -73,12 +75,27 @@ function M.start(name, commit)
         end
         local summary = ('Imported %d marks into %s%s'):format(count, value,
           partial and (' (partial: %d frames excluded)'):format(#result.issues) or '')
+        if warnings > 0 then summary = summary .. ('; %d snapshot capture warnings'):format(warnings) end
         M.report[1] = summary
         vim.notify('Stringer: ' .. summary)
-        if partial then M.show_report() end
+        if partial or warnings > 0 then M.show_report() end
       end
-      if name then save(name)
-      else vim.ui.input({ prompt = 'Imported codepath name: ' }, save) end
+      source.read_marks(result.marks, function(values)
+        if token.cancelled then return end
+        for i, mark in ipairs(result.marks) do
+          local current = values[mark.file][mark.line]
+          if current.status == 'ok' then
+            mark.snapshot = current.text
+          else
+            warnings = warnings + 1
+            M.report[#M.report + 1] = ('Source line %d: snapshot not captured (mark retained): %s'):format(
+              result.source_lines[i], current.message or current.status)
+            M.report[#M.report + 1] = '  ' .. vim.fn.strtrans(mark.frame)
+          end
+        end
+        if name then save(name)
+        else vim.ui.input({ prompt = 'Imported codepath name: ' }, save) end
+      end, { force = true })
     end)
   end
   if #formats == 1 then parse(formats[1])

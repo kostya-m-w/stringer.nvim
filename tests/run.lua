@@ -45,7 +45,7 @@ local function reset()
   vim.fn.writefile({ 'one', 'two', 'three', 'four' }, file)
   vim.fn.writefile({ 'alpha', 'beta', 'gamma' }, other)
   s.setup({ storage_dir = dir .. '/paths', pane_width = 48, gutter = true, inline_notes = true,
-    symbol_labels = true, gutter_sign = 'o', gutter_note_sign = 'N', gutter_priority = 10 })
+    symbol_labels = true, gutter_sign = '->', gutter_note_sign = 'N', gutter_priority = 10 })
   messages = {}
 end
 local function test(name, fn)
@@ -301,14 +301,16 @@ test('persisted paths reopen in a fresh Neovim process', function()
   assert(vim.v.shell_error == 0, output); assert(output:find('REOPEN PASS'), output)
 end)
 
-test('v1 reads without rewrite and upgrades on mutation; v2 metadata round trips', function()
+test('v1 reads without rewrite and upgrades on mutation; metadata round trips', function()
   local r = capture()
-  local lines = codec.encode(r.marks)
+  local old = vim.deepcopy(r.marks)
+  for _, mark in ipairs(old) do mark.snapshot = nil end
+  local lines = codec.encode(old)
   lines[1] = '{"type":"stringer","format_version":1,"mark_version":1}'
   vim.fn.writefile(lines, r.file)
   local before = store.read(r.file)
   yes(s.reload()); eq(store.read(r.file), before)
-  yes(s.skip(1)); assert(store.read(r.file):find('"mark_version":2', 1, true))
+  yes(s.skip(1)); assert(store.read(r.file):find('"mark_version":3', 1, true))
   local marks = { { file = file, line = 1, skipped = true, note = 'α\nsecond line\n', frame = 'original frame' } }
   eq(codec.decode(codec.encode(marks)), marks)
   lines = codec.encode(marks)
@@ -455,7 +457,9 @@ test('import preserves trace and quickfix, persists once, and creates a new path
   local original, writes = store.write, 0
   store.write = function(...) writes = writes + 1; return original(...) end
   local ok, err = pcall(function()
-    yes(s.import('trace')); eq(state.active.name, 'trace'); eq(#state.active.marks, 5)
+    yes(s.import('trace'))
+    yes(vim.wait(3000, function() return require('stringer.import').pending == nil end, 5))
+    eq(state.active.name, 'trace'); eq(#state.active.marks, 5)
     eq(writes, 1); eq(vim.fn.getqflist({ all = 0 }), quickfix)
     eq(vim.api.nvim_buf_get_lines(buf, 0, -1, false), lines)
     eq(#store.load(previous.name).marks, 3)
@@ -588,7 +592,7 @@ test('source signs aggregate duplicate notes, active and mixed skipped states', 
   marks[4] = { file = file, line = 2 }
   yes(require('stringer.model').persist(r, marks, 4))
   local buf = vim.fn.bufnr(file)
-  eq(signs(buf)[2].sign_text:match('^%S+'), 'N')
+  eq(signs(buf)[2].sign_text:match('^%S+'), '->')
   eq(signs(buf)[2].sign_hl_group, 'StringerGutterActive')
   r.index = 3; require('stringer.presentation').refresh(r)
   eq(signs(buf)[2].sign_hl_group, 'StringerGutter')
@@ -627,78 +631,187 @@ test('disabled UI options leave storage and other editor layout settings unchang
   eq(r.ranges[1].last, r.ranges[1].location)
   no(pcall(s.setup, { gutter_sign = 'too wide' }))
 end)
-test('frame labels retain distinct Ruby contexts and parse V8 and Java titles', function()
-  local labels = require('stringer.labels')
-  eq(labels.frame("app/task.rb:7:in `show'"), 'show')
-  eq(labels.frame("app/task.rb:7:in `new'"), 'new')
-  eq(labels.frame('at async main (/app/main.ts:2:3)'), 'async main')
-  eq(labels.frame('at module/app.Service.run(Service.java:4)'), 'app.Service.run')
-  eq(labels.frame('at /app/main.ts:2:3'), nil)
-end)
-local function symbol(name, kind, start_line, end_line, end_col, children)
-  return { name = name, kind = kind, range = {
-    start = { line = start_line, character = 0 }, ['end'] = { line = end_line, character = end_col or 0 },
-  }, children = children }
+local contents = require('stringer.source')
+local function read_lines(path, numbers, force)
+  local values
+  contents.read(path, numbers, function(result) values = result end, { force = force })
+  yes(vim.wait(3000, function() return values ~= nil end, 5), 'source read timed out')
+  return values
 end
-test('enclosing symbols choose nested methods and respect end-exclusive ranges', function()
-  local labels = require('stringer.labels')
-  local symbols = { symbol('Service', 5, 0, 20, 0, {
-    symbol('run', 6, 2, 10, 0, { symbol('nested', 12, 4, 6, 0) }),
-  }) }
-  eq(labels.enclosing(symbols, 3), 'Service.run')
-  eq(labels.enclosing(symbols, 5), 'Service.nested')
-  eq(labels.enclosing(symbols, 6), 'Service.run')
-  eq(labels.enclosing(symbols, 10), nil)
-  eq(labels.enclosing({ { name = 'flat', kind = 6, location = {} } }, 2), nil)
+test('v3 distinguishes absent, empty and exact snapshots and rejects invalid records', function()
+  local marks = {
+    { file = file, line = 1 }, { file = file, line = 2, snapshot = '' },
+    { file = file, line = 3, snapshot = '  α = "value"\t ' },
+  }
+  eq(codec.decode(codec.encode(marks)), marks)
+  for _, value in ipairs({ 'bad\nline', 'bad\rline', 12, true }) do
+    local invalid = codec.encode({ { file = file, line = 1, snapshot = value } })
+    no(codec.decode(invalid))
+  end
+  local v2 = codec.encode({ marks[1] }); v2[1] = v2[1]:gsub('"mark_version":3', '"mark_version":2')
+  eq(codec.decode(v2), { marks[1] })
 end)
-test('LSP title cache coalesces requests and rejects stale edit responses', function()
+test('add captures unsaved source exactly and refresh is per-mark and undoable', function()
+  local r = capture(); eq(r.marks[1].snapshot, 'two')
+  edit(file, 2); vim.api.nvim_buf_set_lines(0, 1, 2, false, { '  replacement  ' })
+  yes(s.add()); eq(r.marks[4].snapshot, '  replacement  ')
+  yes(s.refresh_snapshot(1)); eq(r.marks[1].snapshot, '  replacement  ')
+  eq(r.marks[4].snapshot, '  replacement  ')
+  yes(s.undo()); eq(r.marks[1].snapshot, 'two')
+  eq(r.marks[4].snapshot, '  replacement  ')
+  local history, text = #r.history, r.text
+  yes(s.refresh_snapshot(4)); eq(#r.history, history); eq(r.text, text)
+end)
+test('comparison badges update without rewriting captured text or storage', function()
+  local r = capture(); yes(s.show())
+  local before, history = r.text, #r.history
+  local buf = vim.fn.bufnr(file)
+  vim.api.nvim_buf_set_lines(buf, 1, 2, false, { ' changed' })
+  yes(vim.wait(1000, function() return rows(r)[3]:find('[changed]', 1, true) ~= nil end, 5))
+  assert(rows(r)[3]:find('two', 1, true)); eq(store.read(r.file), before); eq(#r.history, history)
+  vim.api.nvim_buf_set_lines(buf, 1, 2, false, { 'two' })
+  yes(vim.wait(1000, function() return not rows(r)[3]:find('[changed]', 1, true) end, 5))
+  vim.fn.delete(file); yes(s.show())
+  yes(vim.wait(1000, function() return rows(r)[3]:find('[missing]', 1, true) ~= nil end, 5))
+  assert(rows(r)[3]:find('two', 1, true)); no(s.refresh_snapshot(1))
+end)
+test('uncaptured marks display current text until explicit capture', function()
+  yes(store.create('old', { { file = file, line = 2 } }))
+  yes(s.open('old')); local r = state.active; local before = r.text
+  yes(s.show())
+  yes(vim.wait(1000, function() return rows(r)[3]:find('two', 1, true) ~= nil end, 5))
+  assert(rows(r)[3]:find('[uncaptured]', 1, true)); eq(store.read(r.file), before)
+  yes(s.refresh_snapshot(1))
+  yes(vim.wait(1000, function() return r.marks[1].snapshot == 'two' end, 5))
+  yes(s.undo()); eq(r.marks[1].snapshot, nil)
+end)
+test('disk reads normalize BOM and CRLF and distinguish empty lines from EOF', function()
+  local path = dir .. '/bom.txt'
+  vim.fn.writefile({ '\239\187\191first\r', '\r', 'last\r', '' }, path, 'b')
+  local values = read_lines(path, { 1, 2, 3, 4 })
+  eq(values[1].text, 'first'); eq(values[2].text, ''); eq(values[3].text, 'last')
+  eq(values[4].status, 'missing'); eq(vim.fn.bufnr(path), -1)
+  vim.fn.writefile({}, path, 'b')
+  values = read_lines(path, { 1, 2 }, true)
+  eq(values[1].text, ''); eq(values[2].status, 'missing')
+end)
+test('missing, unreadable encoding and non-file paths have distinct results', function()
+  eq(read_lines(dir .. '/missing', { 1 })[1].status, 'missing')
+  eq(read_lines(dir, { 1 })[1].status, 'unreadable')
+  local path = dir .. '/utf16.txt'
+  local fd = assert(uv.fs_open(path, 'w', 384))
+  assert(uv.fs_write(fd, '\255\254a\0', 0)); uv.fs_close(fd)
+  eq(read_lines(path, { 1 })[1].status, 'unreadable')
+  fd = assert(uv.fs_open(path, 'w', 384))
+  assert(uv.fs_write(fd, '\255bad', 0)); uv.fs_close(fd)
+  eq(read_lines(path, { 1 }, true)[1].status, 'unreadable')
+end)
+test('source requests coalesce, force freshness and ignore superseded reads', function()
+  local path = dir .. '/read.txt'
+  vim.fn.writefile({ 'one', 'two' }, path)
+  local first, second
+  contents.read(path, { 1 }, function(values) first = values end)
+  local entry = contents.cache[path]
+  contents.read(path, { 2 }, function(values) second = values end)
+  eq(contents.cache[path], entry)
+  yes(vim.wait(1000, function() return first ~= nil and second ~= nil end, 5))
+  eq(first[1].text, 'one'); eq(second[2].text, 'two')
+  local stale
+  contents.read(path, { 1 }, function(values) stale = values end, { force = true })
+  contents.invalidate(path)
+  yes(vim.wait(1000, function() return stale ~= nil end, 5)); eq(stale[1].status, 'stale')
+  vim.fn.writefile({ 'new', 'two' }, path)
+  eq(read_lines(path, { 1 }, true)[1].text, 'new')
+end)
+test('loaded buffer wins over disk; unloading and focus refresh return to disk', function()
   local r = capture(); local buf = vim.fn.bufnr(file)
-  local labels = require('stringer.labels')
-  local original = vim.lsp.get_clients
-  local callbacks, requests = {}, 0
-  local client = { id = 7 }
-  client.supports_method = function() return true end
-  client.request = function(...)
-    local args = { ... }
-    local callback = args[vim.fn.has('nvim-0.11') == 1 and 4 or 3]
-    requests = requests + 1; callbacks[#callbacks + 1] = callback
-    return true, requests
-  end
-  local ok, err = pcall(function()
-    vim.lsp.get_clients = function() return { client } end
-    labels.invalidate(buf)
-    labels.request(buf, function() end); labels.request(buf, function() end); eq(requests, 1)
-    vim.api.nvim_buf_set_lines(buf, 0, 1, false, { 'edit' })
-    callbacks[1](nil, { symbol('stale', 12, 0, 20) })
-    eq(labels.title(r.marks[1]), vim.fs.basename(file))
-    labels.request(buf, function() end)
-    callbacks[#callbacks](nil, { symbol('current', 12, 0, 20) })
-    eq(labels.title(r.marks[1]), 'current')
-    vim.lsp.get_clients = function() return {} end
-    labels.request(buf, function() end)
-    eq(labels.title(r.marks[1]), vim.fs.basename(file))
-  end)
-  vim.lsp.get_clients = original; yes(ok, err)
+  vim.api.nvim_buf_set_lines(buf, 1, 2, false, { 'unsaved' })
+  eq(read_lines(file, { 2 })[2].text, 'unsaved')
+  vim.api.nvim_buf_delete(buf, { unload = true, force = true })
+  eq(read_lines(file, { 2 }, true)[2].text, 'two')
+  vim.fn.writefile({ 'one', 'external', 'three', 'four' }, file)
+  yes(s.show()); vim.api.nvim_exec_autocmds('FocusGained', {})
+  yes(vim.wait(1000, function() return rows(r)[3]:find('[changed]', 1, true) ~= nil end, 5))
 end)
-test('delayed LSP results do not redraw an unrelated active path or move focus', function()
-  capture(); local buf = vim.fn.bufnr(file)
-  local labels = require('stringer.labels')
-  local original, callback = vim.lsp.get_clients, nil
-  local client = { id = 8, supports_method = function() return true end }
-  client.request = function(...)
-    local args = { ... }; callback = args[vim.fn.has('nvim-0.11') == 1 and 4 or 3]
-    return true, 1
-  end
+test('snapshot failure and stale mutation preserve old snapshots and history', function()
+  local r = capture(); edit(file, 2)
+  vim.api.nvim_buf_set_lines(0, 1, 2, false, { 'new' })
+  local before, history = r.text, #r.history
+  local original = uv.fs_rename
+  uv.fs_rename = function() return nil, 'injected write failure' end
+  local ok, err = pcall(function() no(s.refresh_snapshot(1)); eq(r.text, before); eq(#r.history, history) end)
+  uv.fs_rename = original; yes(ok, err)
+  local path = dir .. '/disk.txt'; vim.fn.writefile({ 'current' }, path)
+  yes(store.create('disk', { { file = path, line = 1, snapshot = 'old' } })); yes(s.open('disk'))
+  local disk = state.active
+  yes(s.refresh_snapshot(1)); yes(s.skip(1))
+  vim.wait(50); eq(disk.marks[1].snapshot, 'old'); eq(#disk.history, 1)
+end)
+test('copy preserves metadata and keeps active path, selection, history and drafts', function()
+  local r = capture(); local marks = vim.deepcopy(r.marks)
+  marks[1].snapshot, marks[1].note, marks[1].frame = '', 'saved note', 'frame context'
+  marks[2].snapshot, marks[2].skipped = nil, true
+  yes(require('stringer.model').persist(r, marks, 1)); yes(s.show()); yes(s.note(1))
+  local editor = require('stringer.notes').editor
+  vim.api.nvim_buf_set_lines(editor.buf, 0, -1, false, { 'unsaved note' })
+  local win, history, index = vim.api.nvim_get_current_win(), #r.history, r.index
+  yes(s.copy('clone')); eq(state.active, r); eq(r.index, index); eq(#r.history, history)
+  eq(vim.api.nvim_get_current_win(), win); eq(vim.bo[editor.buf].modified, true)
+  local copy = yes(store.load('clone'))
+  eq(copy.marks, marks); eq(copy.history, nil); eq(copy.index, nil)
+  yes(s.remove(3)); eq(#store.load('clone').marks, 3)
+end)
+test('copy rejects collisions, external source changes and dirty destination buffers', function()
+  local r = capture(); no(s.copy('demo')); no(s.copy('../bad'))
+  edit(store.path('draft')); vim.api.nvim_buf_set_lines(0, 0, -1, false, { 'draft' })
+  no(s.copy('draft')); eq(state.active, r)
+  vim.fn.writefile(codec.encode({}), r.file); no(s.copy('external'))
+  no(store.load('external')); eq(state.active, r)
+end)
+test('copy cancellation and stale name prompt do not copy another path', function()
+  local r = capture(); local original = vim.ui.input
+  local callback
+  vim.ui.input = function(_, cb) callback = cb end
   local ok, err = pcall(function()
-    vim.lsp.get_clients = function() return { client } end
-    labels.invalidate(buf)
-    require('stringer.presentation').labels(buf, state.active)
-    assert(callback)
-    yes(s.new('unrelated')); yes(s.show())
-    local win, before = vim.api.nvim_get_current_win(), rows(state.active)
-    callback(nil, { symbol('late', 12, 0, 20) }); vim.wait(20)
-    eq(state.active.name, 'unrelated'); eq(rows(state.active), before)
-    eq(vim.api.nvim_get_current_win(), win)
+    yes(s.copy()); callback(nil); eq(store.list(), { 'demo' })
+    yes(s.copy()); yes(s.skip(1)); callback('stale'); no(store.load('stale'))
+    eq(state.active, r)
+    yes(s.copy()); yes(s.new('other')); callback('wrong'); no(store.load('wrong'))
+  end)
+  vim.ui.input = original; yes(ok, err)
+end)
+test('copy write failure leaves original and destination intact', function()
+  local r = capture(); local original = uv.fs_rename
+  uv.fs_rename = function() return nil, 'injected copy failure' end
+  local ok, err = pcall(function()
+    no(s.copy('failed')); eq(state.active, r); no(store.load('failed')); eq(store.read(r.file), r.text)
+  end)
+  uv.fs_rename = original; yes(ok, err)
+end)
+test('import captures snapshots, retaining stale lines with warnings rather than exclusions', function()
+  vim.cmd('enew'); vim.api.nvim_buf_set_lines(0, 0, -1, false, {
+    'at stale (' .. file .. ':999:1)', 'at entry (' .. file .. ':2:1)',
+  })
+  yes(s.import('snapshots'))
+  yes(vim.wait(3000, function() return require('stringer.import').pending == nil end, 5))
+  local r = state.active
+  eq(r.name, 'snapshots'); eq(#r.marks, 2); eq(r.marks[1].snapshot, 'two'); eq(r.marks[2].snapshot, nil)
+  local report = table.concat(require('stringer.import').report, '\n')
+  assert(report:find('1 snapshot capture warnings', 1, true)); assert(report:find('mark retained', 1, true))
+end)
+test('cancelled snapshot-enrichment import creates no path', function()
+  vim.cmd('enew'); vim.api.nvim_buf_set_lines(0, 0, -1, false, { 'at entry (' .. file .. ':2:1)' })
+  yes(s.import('cancelled')); yes(s.cancel_import()); vim.wait(50)
+  no(store.load('cancelled')); eq(state.active, nil)
+end)
+test('source preview supersedes frame labels without requesting LSP', function()
+  local r = capture(); local marks = vim.deepcopy(r.marks)
+  marks[1].frame = "app/task.rb:7:in `some_method'"
+  local original = vim.lsp.get_clients
+  vim.lsp.get_clients = function() error('LSP should not be queried for source previews') end
+  local ok, err = pcall(function()
+    yes(require('stringer.model').persist(r, marks, 1)); yes(s.show())
+    assert(rows(r)[3]:find('two', 1, true)); assert(not rows(r)[3]:find('some_method', 1, true))
   end)
   vim.lsp.get_clients = original; yes(ok, err)
 end)

@@ -1,7 +1,7 @@
 local config = require('stringer.config')
 local state = require('stringer.state')
 local layout = require('stringer.layout')
-local labels = require('stringer.labels')
+local source = require('stringer.source')
 local M = {
   buffers = {},
   windows = {},
@@ -94,7 +94,7 @@ function M.refresh(record, selected)
     local range = index and (record.ranges or {})[index]
     cursors[win] = { row = cursor[1], index = index, offset = range and cursor[1] - range.first or 0 }
   end
-  local view = layout.build(record, M.width(record), labels.title, config.options.inline_notes and state.active == record)
+  local view = layout.build(record, M.width(record), source.preview, config.options.inline_notes and state.active == record)
   local lines = view.lines
   record.row_to_index, record.index_to_row, record.ranges = view.row_to_index, view.index_to_row, view.ranges
   vim.bo[buf].modifiable = true
@@ -153,6 +153,7 @@ local function prepare(record)
     s = { 'skip', 'Toggle skipped mark' },
     H = { 'hide_skipped', 'Hide or reveal skipped marks' },
     n = { 'note', 'Edit mark note' },
+    c = { 'refresh_snapshot', 'Capture or refresh source snapshot' },
   }
   for key, action in pairs(mappings) do
     local method = action[1]

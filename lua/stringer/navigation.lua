@@ -62,7 +62,10 @@ function M.capture()
   if vim.bo[buf].buftype ~= '' or file == '' or not stat or stat.type ~= 'file' then
     return nil, 'Marks require a normal, saved file buffer; save the file first'
   end
-  return { file = vim.fs.normalize(file), line = vim.api.nvim_win_get_cursor(0)[1] }
+  local line = vim.api.nvim_win_get_cursor(0)[1]
+  local current = require('stringer.source').line_result(vim.api.nvim_buf_get_lines(buf, line - 1, line, false)[1])
+  if current.status ~= 'ok' then return nil, current.message end
+  return { file = vim.fs.normalize(file), line = line, snapshot = current.text }
 end
 
 function M.jump(record, index)

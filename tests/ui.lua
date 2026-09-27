@@ -111,9 +111,9 @@ local ok, err = xpcall(function()
   local gutter_text = lua([[
     local pos = vim.fn.screenpos(_G.codewin, 1, 1)
     local winpos = vim.api.nvim_win_get_position(_G.codewin)
-    return vim.fn.screenstring(pos.row, winpos[2] + 1)
+    return vim.fn.screenstring(pos.row, winpos[2] + 1) .. vim.fn.screenstring(pos.row, winpos[2] + 2)
   ]])
-  assert(gutter_text == 'N', 'Note-bearing source sign not rendered: ' .. gutter_text)
+  assert(gutter_text == '->', 'Shared source arrow not rendered: ' .. gutter_text)
   lua('assert(require("stringer").show())')
   local note_row = lua('return require("stringer.state").active.ranges[2].location + 1')
   assert(lua([[
@@ -163,6 +163,28 @@ local ok, err = xpcall(function()
   assert(lua('return vim.api.nvim_win_get_cursor(0)[1]') == 1, 'Imported entrypoint jump failed')
   input(':Stringer next<CR>')
   assert(lua('return vim.api.nvim_win_get_cursor(0)[1]') == 3, 'Imported downstream jump failed')
+  input('ccchanged_location<Esc>')
+  assert(lua([[
+    local r = require('stringer.state').active
+    local p = require('stringer.pane')
+    local text = vim.api.nvim_buf_get_lines(p.buffer(r), r.index_to_row[2] - 1, r.index_to_row[2], false)[1]
+    return text:find('[changed]', 1, true) ~= nil and text:find('third', 1, true) ~= nil
+      and r.marks[2].snapshot == 'third_location'
+  ]]), 'Changing source did not preserve and flag the snapshot')
+  lua([[
+    assert(require('stringer').show())
+    local r = require('stringer.state').active
+    vim.api.nvim_win_set_cursor(0, { r.index_to_row[2] + 1, 0 })
+  ]])
+  input('c')
+  assert(lua('return require("stringer.store").load("imported-ui").marks[2].snapshot') == 'changed_location',
+    'Capture mapping did not persist current source')
+  input('u')
+  assert(lua('return require("stringer.state").active.marks[2].snapshot') == 'third_location', 'Snapshot undo failed')
+  input(':Stringer copy copied-ui<CR>')
+  assert(lua('return require("stringer.state").active.name') == 'imported-ui', 'Copy switched the active path')
+  assert(lua('return require("stringer.store").load("copied-ui").marks[2].snapshot') == 'third_location',
+    'Copy did not preserve the saved snapshot')
 end, debug.traceback)
 
 vim.fn.jobstop(child)
@@ -171,5 +193,5 @@ if not ok then
   print(err)
   vim.cmd('cquit 1')
 end
-print('UI PASS: two-line entries, inline notes, source gutter signs, resizing, filtered actions, note editing, import navigation')
+print('UI PASS: captured previews, change indicator, refresh/undo, copy, shared arrow, inline notes, filtered actions, imports')
 vim.cmd('qa!')

@@ -4,11 +4,11 @@ M.options = {
   storage_dir = vim.fn.stdpath('data') .. '/stringer/paths',
   pane_width = 48,
   gutter = true,
-  gutter_sign = 'o',
-  gutter_note_sign = 'N',
+  gutter_sign = '->',
+  gutter_note_sign = '->', -- Deprecated, accepted for existing configurations.
   gutter_priority = 10,
   inline_notes = true,
-  symbol_labels = true,
+  symbol_labels = true, -- Deprecated: previews always show captured source.
 }
 
 function M.setup(opts)

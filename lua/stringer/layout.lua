@@ -65,7 +65,7 @@ function M.suffixes(marks)
   return result
 end
 
-function M.build(record, width, title, inline_notes)
+function M.build(record, width, preview, inline_notes)
   width = math.max(1, width)
   local skipped = 0
   for _, mark in ipairs(record.marks) do if mark.skipped then skipped = skipped + 1 end end
@@ -75,7 +75,7 @@ function M.build(record, width, title, inline_notes)
   local header = ('Stringer: %s (%d marks, %d skipped, %d hidden)%s'):format(
     record.name, #record.marks, skipped, hidden, active_hidden and ' [active hidden]' or '')
   local view = {
-    lines = { header, '<CR> jump  n note  s skip  H hide  K/J move  dd remove  u undo  q close' },
+    lines = { header, '<CR> jump  c capture  n note  s skip  H hide  K/J move  dd remove  u undo  q close' },
     row_to_index = {}, index_to_row = {}, ranges = {},
   }
   local suffixes = M.suffixes(record.marks)
@@ -87,9 +87,9 @@ function M.build(record, width, title, inline_notes)
     if not (record.hide_skipped and mark.skipped) then
       local row = #view.lines + 1
       view.index_to_row[i] = row
-      local prefix = i .. ' ' .. (mark.skipped and '[skip] ' or '') .. (mark.note and '[note] ' or '')
-      local name = vim.fn.strtrans(title(mark))
-      add(i, M.fit(prefix .. name, width))
+      local text, badge = preview(mark)
+      local prefix = i .. ' ' .. (badge or '') .. (mark.skipped and '[skip] ' or '') .. (mark.note and '[note] ' or '')
+      add(i, M.fit(prefix .. vim.fn.strtrans(text), width))
       local location = vim.fn.strtrans(suffixes[mark.file]) .. ':' .. tostring(mark.line)
       local indent = string.rep(' ', math.min(3, math.max(0, width - 1)))
       add(i, indent .. M.fit(location, width - #indent, true))

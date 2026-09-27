@@ -174,4 +174,10 @@ function M.rename(record, name)
   return file
 end
 
+function M.copy(record, name)
+  local ok, err = unchanged(record.file, record.text)
+  if not ok then return nil, err end
+  return M.create(name, vim.deepcopy(record.marks))
+end
+
 return M

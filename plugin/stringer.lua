@@ -12,14 +12,14 @@ local stringer = require('stringer')
 stringer._initialize()
 local commands = {
   'new', 'open', 'show', 'add', 'next', 'prev', 'rename', 'remove', 'move-up', 'move-down', 'undo', 'reload',
-  'skip', 'hide-skipped', 'note', 'import', 'import-report', 'cancel-import',
+  'skip', 'hide-skipped', 'note', 'import', 'import-report', 'cancel-import', 'copy', 'refresh-snapshot',
 }
 vim.api.nvim_create_user_command('Stringer', function(args)
   local subcommand, name = args.fargs[1], args.fargs[2]
   local valid = vim.tbl_contains(commands, subcommand)
-  local named = { new = true, open = true, rename = true, import = true }
+  local named = { new = true, open = true, rename = true, import = true, copy = true }
   if not valid or #args.fargs > 2 or (name and not named[subcommand]) then
-    vim.notify('Usage: Stringer new/open/rename/import [name] | ' .. table.concat(commands, ' | '), vim.log.levels.ERROR)
+    vim.notify('Usage: Stringer new/open/rename/import/copy [name] | ' .. table.concat(commands, ' | '), vim.log.levels.ERROR)
     return
   end
   stringer[(subcommand:gsub('-', '_'))](name)

@@ -54,7 +54,7 @@ function M.resolve(parsed, root, token, callback)
   end
   local function finish(index)
     if token.cancelled then return end
-    local marks, issues = {}, vim.deepcopy(parsed.issues)
+    local marks, issues, source_lines = {}, vim.deepcopy(parsed.issues), {}
     for _, frame in ipairs(parsed.frames) do
       local file, reason, candidates
       if frame.format == 'java' and not frame.file:find('[/\\]') then
@@ -78,6 +78,7 @@ function M.resolve(parsed, root, token, callback)
       if frame.line < 1 then reason, file = 'Invalid source line number', nil end
       if file then
         marks[#marks + 1] = { file = file, line = frame.line, frame = frame.raw }
+        source_lines[#source_lines + 1] = frame.source_line
       else
         issues[#issues + 1] = {
           source_line = frame.source_line, raw = frame.raw, reason = reason, candidates = candidates,
@@ -85,7 +86,7 @@ function M.resolve(parsed, root, token, callback)
       end
     end
     table.sort(issues, function(a, b) return a.source_line < b.source_line end)
-    callback({ marks = marks, issues = issues, format = parsed.format })
+    callback({ marks = marks, issues = issues, source_lines = source_lines, format = parsed.format })
   end
   if needs_index then java_index(root, token, finish) else finish({}) end
 end

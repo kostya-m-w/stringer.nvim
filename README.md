@@ -3,7 +3,7 @@
 Capture ordered codepaths and navigate them in Neovim. A codepath can span
 multiple repositories and contain multiple locations in the same file.
 
-Version **0.4** requires **Neovim 0.10+**. Pure Lua, with no dependencies.
+Version **0.5** requires **Neovim 0.10+**. Pure Lua, with no dependencies.
 
 ## Installation
 
@@ -51,11 +51,9 @@ require('stringer').setup({
   storage_dir = vim.fn.stdpath('data') .. '/stringer/paths',
   pane_width = 48,
   gutter = true,
-  gutter_sign = 'o',
-  gutter_note_sign = 'N',
+  gutter_sign = '->',
   gutter_priority = 10,
   inline_notes = true,
-  symbol_labels = true,
 })
 ```
 
@@ -77,6 +75,7 @@ require('stringer').setup({
 | `:Stringer new [name]` | Create and activate a path; prompt when name is omitted. |
 | `:Stringer open [name]` | Activate a path, or select one with `vim.ui.select`. |
 | `:Stringer rename [name]` | Rename the active path; prompt when name is omitted. |
+| `:Stringer copy [name]` | Copy the active path under a new name, remaining on the original. |
 | `:Stringer add` | Append the current file and line. |
 | `:Stringer show` | Open/focus the mark pane. |
 | `:Stringer next` / `prev` | Jump to the next/previous mark, wrapping at either end. |
@@ -87,6 +86,7 @@ require('stringer').setup({
 | `:Stringer skip` | Toggle skipping the selected mark during navigation. |
 | `:Stringer hide-skipped` | Hide/reveal skipped marks in the pane. |
 | `:Stringer note` | Edit the selected mark's multiline note. |
+| `:Stringer refresh-snapshot` | Capture/replace the selected mark's saved source-line preview. |
 | `:Stringer import [name]` | Import the whole buffer's stacktrace into a new codepath. |
 | `:Stringer import-report` | Show the most recent import's results and excluded frames. |
 | `:Stringer cancel-import` | Cancel pending source lookup or an import prompt. |
@@ -141,28 +141,27 @@ The pane is a noneditable view, separate from the persisted file format:
 | `s` | Toggle skipped state and save immediately. |
 | `H` | Hide/reveal skipped marks without changing storage. |
 | `n` | Open the selected mark's multiline note editor. |
+| `c` | Capture/refresh the selected mark's source snapshot and save. |
 | `q` | Close the pane; keep the codepath active. |
 
-Each mark now has two rows: a contextual title, then a readable location ending
+Each mark has two rows: a captured source line, then a readable location ending
 in its filename and line number. Paths use the shortest trailing suffix that
 distinguishes files in the active path. Long locations are shortened from the
 left, preserving the useful ending rather than the directory prefix.
 
 ```text
-3 [note] TasksController.show
+3 [changed] [note] task = Task.new(params[:task])
    controllers/tasks_controller.rb:7
    │ Builds the task before rendering.
    │ Check behavior when the owner is missing.
-4 Task.initialize
+4 @owner = owner
    models/task.rb:23
 ```
 
-Imported marks use their recorded method/function label when recognizable.
-Otherwise Stringer can obtain the enclosing method/function from hierarchical
-document symbols supplied by an already attached LSP server. It includes class
-or module context when available, and falls back to the filename. No server is
-started and no file is loaded just to obtain labels. Set `symbol_labels = false`
-for filename-only titles. Tree-sitter is not required.
+Source text always replaces filename/method titles, including imported frame
+labels. LSP lookups are no longer performed. The older `symbol_labels` and
+`gutter_note_sign` setup keys are accepted as deprecated no-ops, so existing
+configurations continue to load. Tree-sitter evaluation remains future work.
 
 Both entry rows and any expanded note rows belong to the same mark: Enter, dd,
 K/J, s, and n work from any of them. Layout adapts to pane width and handles
@@ -171,13 +170,14 @@ visible pane's available width. Stored paths remain absolute and unchanged.
 
 ## Source gutter indicators
 
-Marks in the **active codepath only** have signs beside source line numbers:
-`o` for ordinary marks, `N` if a mark on that line has a note. Active marks use
+Marks in the **active codepath only** have the same yellow `->` sign beside source
+line numbers, with or without notes. Active marks use
 `StringerGutterActive`; ordinary and all-skipped groups use `StringerGutter` and
-`StringerGutterSkipped`. Default links are `Search`, `Special`, and `Comment`.
+`StringerGutterSkipped`. Defaults use yellow text, bold for the active sign, and
+a subdued yellow for skipped groups. You can override these highlight groups.
 
-Multiple marks at the same source line share one sign. Any note makes it a note
-sign; it is dimmed only if all marks on that line are skipped. Hiding skipped
+Multiple marks at the same source line share one sign; it is dimmed only if all
+marks on that line are skipped. Hiding skipped
 marks in the list does not remove their source signs. Signs appear only in loaded
 code buffers, and out-of-range marks are not clamped onto unrelated lines.
 
@@ -189,6 +189,62 @@ to disable these indicators.
 
 These remain fixed line references: signs are reconciled to the stored lines
 after edits, not used to silently relocate persisted marks.
+
+## Captured source previews
+
+Adding a mark captures the full current source line, including unsaved buffer
+edits. Imports also capture source lines where available. The saved snapshot is
+never silently replaced by later source edits. Display trims leading indentation
+and shortens long lines, but storage and comparison retain exact whitespace.
+
+| Indicator | Meaning |
+| --- | --- |
+| `[changed]` | Current text at the stored location differs; the preview still shows the saved snapshot. |
+| `[uncaptured]` | This mark has no snapshot yet; the preview uses current text until you explicitly capture it. |
+| `[missing]` | The file or stored line no longer exists. |
+| `[unreadable]` | Source cannot be read/decoded, or the path is not a file. |
+| `[checking]` | An asynchronous source read is pending. |
+
+Empty or whitespace-only previews display `(blank line)`. A captured empty line
+is different from an uncaptured mark. Uncaptured marks can also be labeled
+missing/unreadable; there is no historical baseline to mark them changed.
+
+Press `c` on either mark row or an inline note row, or run
+`:Stringer refresh-snapshot`, to accept current text. This changes only that mark,
+saves immediately on success, and is undoable with `u`. An identical refresh
+does not add undo history. Missing sources, failed writes, and stale asynchronous
+results leave the old snapshot intact. Refreshing a snapshot is a mark mutation,
+so an open note draft uses the usual stale-revision protection.
+
+Current text comes from a loaded code buffer (including unsaved edits), otherwise
+disk. Deleted files are reported missing even if an old buffer remains loaded.
+Disk reads handle UTF-8 BOM and LF/CRLF; unsupported encodings are reported as
+unreadable (a loaded buffer can supply Neovim-decoded text). Reading never opens
+source buffers. Comparison updates after buffer changes, pane show, and focus
+return. Background changes to unloaded files are detected at those refresh
+points, not by continuous filesystem watching.
+
+`[changed]` compares the stored line, not a relocated matching statement. It can
+indicate code movement or an indentation-only edit. Navigation still uses the
+stored file and line. Preview refreshes never write snapshots or undo history.
+
+## Copy a codepath
+
+```vim
+:Stringer copy investigation-variant
+```
+
+Omit the name to prompt. The new path preserves mark order, notes, skipped state,
+frame context, and snapshots—including absent or empty snapshots. **The original
+stays active**, with its pane selection and undo history unchanged. Open the copy
+with `:Stringer open investigation-variant` when ready; it starts with fresh
+runtime state and no undo history. Copies never recapture source text.
+
+Existing destination names, dirty raw storage buffers, and externally changed
+source codepath files block copying. If the path changes during the name prompt,
+retry the command. An unsaved note-editor draft is preserved but not included;
+copy uses the last saved note. Cancellation or write failure leaves the original
+untouched.
 
 ## Skipped marks
 
@@ -245,8 +301,8 @@ Supported initial formats:
 
 These formats print deepest calls first. Stringer reverses parsed frames so the
 outermost available caller appears at the top. Repeated locations and framework
-frames are preserved. Original frame text is stored separately from your notes
-and supplies contextual titles when recognizable.
+frames are preserved. Original frame text remains stored separately from notes;
+the pane displays captured source text instead.
 
 Absolute local paths are used directly; relative paths resolve against the Git
 root containing the captured working directory, falling back to that directory.
@@ -260,6 +316,12 @@ source-line-specific reasons in the import report. A partial import is labeled
 as partial and opens its report automatically; reopen it with `import-report`.
 If no frames resolve, no codepath is created. Line numbers past EOF still use
 the normal stale-mark checks at navigation time.
+
+Resolved frames are enriched with snapshots in a batched read before saving.
+If capture fails (for example, a stored line is past EOF), the mark is retained
+without a snapshot and the report includes a capture warning. These warnings
+are counted separately from excluded frames. Cancelling during capture creates
+no codepath.
 
 Use one conventional stack per buffer: chained/suppressed exceptions, elided Java
 chains, interrupted/multiple stacks, and outermost-first Ruby tracebacks are
@@ -286,16 +348,14 @@ discarded first. External-edit checks are content-based, not multi-process locks
 
 ## Storage format and compatibility
 
-Existing 0.1/0.2 paths load without rewriting. New paths and successful mutations
-use mark format v2. Each `<name>.stringer` file contains a JSON Lines header and
-one mark per physical line:
-
-Version 0.4 uses the same storage format as 0.3; gutter signs, labels, and layout
-are transient presentation state, not mark mutations.
+Existing paths from 0.1–0.4 load without rewriting or silently capturing text.
+New paths and successful mutations use mark format v3. Untouched old marks keep
+their snapshots absent. Each `<name>.stringer` file contains a JSON Lines header
+and one mark per physical line:
 
 ```json
-{"type":"stringer","format_version":1,"mark_version":2}
-{"file":"/workspace/service/src/main.lua","line":42}
+{"type":"stringer","format_version":1,"mark_version":3}
+{"file":"/workspace/service/src/main.lua","line":42,"snapshot":"  handle(request)"}
 {"file":"/workspace/library/src/client.lua","line":108,"skipped":true,"note":"First line\nSecond line","frame":"original imported frame"}
 ```
 
@@ -304,9 +364,11 @@ positive, one-based integer line numbers are required. Duplicate locations and
 header-only paths are valid. Invalid JSON, blank records, extra fields, relative
 paths, and unsupported versions are rejected. A normal final newline is valid.
 
-Optional v2 fields are boolean `skipped` and string `note`/`frame`; absent skipped
-means false. Multiline strings are JSON-escaped. Older Stringer releases reject
-mark format v2, so upgraded paths require Stringer 0.3+.
+Optional fields are boolean `skipped` and string `note`/`frame`/`snapshot`; absent
+skipped means false. Notes and frame strings are JSON-escaped. Snapshots contain
+one logical source line without its terminator. An absent snapshot means
+uncaptured; `"snapshot":""` captures an empty line. Older Stringer releases
+reject mark format v3, so upgraded paths require Stringer 0.5+.
 
 Unlike 0.1, the pane is no longer raw JSON: editing text and `:write` have been
 replaced by explicit, immediately persisted mark actions.
@@ -316,18 +378,19 @@ replaced by explicit, immediately persisted mark actions.
 `require('stringer')` exposes:
 
 - `setup(opts)`
-- `new(name?)`, `open(name?)`, `rename(name?)`, `reload()`
+- `new(name?)`, `open(name?)`, `rename(name?)`, `copy(name?)`, `reload()`
 - `add()`, `show()`, `next()`, `prev()`, `jump(index)`
 - `remove(index?)`, `move_up(index?)`, `move_down(index?)`, `undo()`
 - `skip(index?)`, `hide_skipped()`, `note(index?)`
+- `refresh_snapshot(index?)`
 - `import(name?)`, `import_report()`, `cancel_import()`
 
 Indices refer to the full stored mark list, including hidden entries, and are
 one-based. Omitted action indices use pane selection or the active
 mark. Operations return `true` or `nil, error` and notify on failure. Prompting
 operations return after launching an asynchronous prompt; cancelling is harmless.
-Import also returns before asynchronous lookup/prompts finish; completion and
-errors are reported through notifications and the import report. `setup` raises
+Import and disk-backed snapshot refresh return before asynchronous work finishes;
+errors are notified, and import details appear in its report. `setup` raises
 an error for invalid options.
 
 ## Current limits
