@@ -54,8 +54,22 @@ local ok, err = xpcall(function()
       vim.fn.screenattr(other.row, other.col),
     }
   ]])
-  assert(visible[1] == '1', 'Pane mark text not rendered')
+  assert(visible[1] == '↓', 'Downward entry arrow not rendered')
   assert(visible[2] ~= visible[3], 'Active mark has no visible highlight')
+  assert(lua([[
+    local p = vim.api.nvim_win_get_position(_G.panewin)
+    local text = ''
+    for col = p[2] + 1, p[2] + vim.api.nvim_win_get_width(_G.panewin) do
+      text = text .. vim.fn.screenstring(p[1] + 1, col)
+    end
+    return text:find('STRINGER', 1, true) ~= nil and text:find('ui', 1, true) ~= nil
+  ]]), 'Persistent codepath header not rendered')
+  vim.rpcrequest(child, 'nvim_ui_try_resize', 160, 35)
+  input('')
+  assert(lua('return vim.api.nvim_win_get_width(_G.panewin)') == 64, 'Adaptive pane did not grow to 40%')
+  vim.rpcrequest(child, 'nvim_ui_try_resize', 120, 35)
+  input('')
+  assert(lua('return vim.api.nvim_win_get_width(_G.panewin)') == 48, 'Adaptive pane did not shrink to 40%')
 
   lua('assert(require("stringer").show())')
   input('3GJ')
@@ -171,6 +185,22 @@ local ok, err = xpcall(function()
     return text:find('[changed]', 1, true) ~= nil and text:find('third', 1, true) ~= nil
       and r.marks[2].snapshot == 'third_location'
   ]]), 'Changing source did not preserve and flag the snapshot')
+  assert(lua([[
+    local r = require('stringer.state').active
+    local p = require('stringer.pane')
+    local win = p.windows[vim.api.nvim_get_current_tabpage()]
+    local badge, source
+    for _, span in ipairs(r.spans) do
+      if span.row == r.index_to_row[2] then
+        if span.group == 'StringerChanged' then badge = span end
+        if span.group == 'StringerSource' then source = span end
+      end
+    end
+    if not badge or not source then return false end
+    local a = vim.fn.screenpos(win, badge.row, badge.first + 1)
+    local b = vim.fn.screenpos(win, source.row, source.first + 1)
+    return a.row > 0 and b.row > 0 and vim.fn.screenattr(a.row, a.col) ~= vim.fn.screenattr(b.row, b.col)
+  ]]), 'Changed badge is not visually distinct on the active entry')
   lua([[
     assert(require('stringer').show())
     local r = require('stringer.state').active
@@ -185,6 +215,42 @@ local ok, err = xpcall(function()
   assert(lua('return require("stringer.state").active.name') == 'imported-ui', 'Copy switched the active path')
   assert(lua('return require("stringer.store").load("copied-ui").marks[2].snapshot') == 'third_location',
     'Copy did not preserve the saved snapshot')
+
+  lua([[
+    vim.api.nvim_set_current_win(_G.codewin)
+    local marks = {}
+    for i = 1, 90 do marks[i] = { file = ..., line = 1, snapshot = 'first_location' } end
+    marks[5].note = 'First\nSecond'
+    assert(require('stringer.store').create('long-view', marks))
+    assert(require('stringer').open('long-view'))
+    assert(require('stringer').show())
+    local r = require('stringer.state').active
+    vim.api.nvim_win_set_cursor(0, { r.index_to_row[30], 0 })
+    vim.cmd('normal! zt')
+    vim.cmd('normal! 4j')
+    vim.cmd('redraw')
+    _G.saved_pane_view = vim.fn.winsaveview()
+    _G.saved_top_owner = r.row_to_index[_G.saved_pane_view.topline]
+    _G.saved_cursor_owner = r.row_to_index[_G.saved_pane_view.lnum]
+    _G.long_pane = vim.api.nvim_get_current_win()
+  ]], fixture)
+  lua('assert(require("stringer").jump(5))')
+  input('')
+  assert(lua([[
+    local r = require('stringer.state').active
+    local view = vim.api.nvim_win_call(_G.long_pane, vim.fn.winsaveview)
+    return vim.api.nvim_get_current_win() == _G.codewin
+      and r.row_to_index[view.topline] == _G.saved_top_owner
+      and r.row_to_index[view.lnum] == _G.saved_cursor_owner
+  ]]), 'Active-mark change scrolled or focused the pane')
+  assert(lua([[
+    local p = vim.api.nvim_win_get_position(_G.long_pane)
+    local text = ''
+    for col = p[2] + 1, p[2] + vim.api.nvim_win_get_width(_G.long_pane) do
+      text = text .. vim.fn.screenstring(p[1] + 1, col)
+    end
+    return text:find('long-view', 1, true) ~= nil
+  ]]), 'Codepath name disappeared when the list was scrolled')
 end, debug.traceback)
 
 vim.fn.jobstop(child)
@@ -193,5 +259,5 @@ if not ok then
   print(err)
   vim.cmd('cquit 1')
 end
-print('UI PASS: captured previews, change indicator, refresh/undo, copy, shared arrow, inline notes, filtered actions, imports')
+print('UI PASS: adaptive pane, persistent header, downward arrows, status colors, preserved viewport, mark actions and notes')
 vim.cmd('qa!')

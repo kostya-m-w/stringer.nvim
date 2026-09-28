@@ -1,6 +1,6 @@
 *stringer.txt*  Ordered codepaths for Neovim                         *stringer*
 
-Stringer 0.5 requires Neovim 0.10 or newer. No dependencies.
+Stringer 0.6 requires Neovim 0.10 or newer. No dependencies.
 
 ==============================================================================
 QUICK START                                                 *stringer-start*
@@ -74,7 +74,7 @@ CONFIGURATION                                            *stringer-setup*
 Setup is optional: >lua
     require('stringer').setup({
       storage_dir = vim.fn.stdpath('data') .. '/stringer/paths',
-      pane_width = 48,
+      pane_width = '40%',
       gutter = true,
       gutter_sign = '->',
       gutter_priority = 10,
@@ -82,14 +82,16 @@ Setup is optional: >lua
     })
 <
 storage_dir             Independent cross-repository codepath storage.
-pane_width              Initial pane width, a positive integer in columns.
+pane_width              Percentage ('1%' to '99%'), or positive integer columns.
+                        Default '40%'. Keep room for at least 40 code columns
+                        where possible; Neovim may further constrain splits.
 gutter                  Show source signs for the active codepath.
 gutter_sign             Shared mark sign; one or two display cells.
 gutter_note_sign        Deprecated no-op, accepted for old configurations.
 gutter_priority         Nonnegative sign priority; default 10.
 inline_notes            Automatically expand notes below the active entry.
 symbol_labels           Deprecated no-op; previews always show source text.
-StringerActive          Active-mark highlight, defaults to Visual.
+StringerActive          Background-only active-mark highlight.
 StringerNote            Inline note highlight, defaults to Comment.
 StringerGutter          Ordinary source signs, yellow by default.
 StringerGutterActive    Active source signs, bold yellow by default.
@@ -112,10 +114,23 @@ The pane is noneditable. Its local mappings are:
     q       Close pane without deactivating the path.
 
 Each entry has two rows: a captured source line and a filename/line location.
+Every first row starts with a downward arrow (↓), including skipped entries.
+Location and inline-note rows are indented beneath it without another arrow.
 Locations use the shortest distinguishing trailing path suffix. Long paths are
 shortened from the left so their endings and line numbers remain useful. Widths
 are measured in display cells. Shared pane buffers use the narrowest visible
 pane's available width. Persisted paths stay absolute.
+
+The selected codepath name appears in a styled persistent winbar. Counts and key
+hints use distinct styles. The name remains visible while the list is scrolled.
+
+Adaptive widths follow editor resizing. Manual widths are remembered per tab
+across close/reopen during the session, and clamped if the editor becomes too
+narrow. setup({pane_width=...}) resets manual preferences and applies that value.
+
+Active-mark changes from code navigation do not auto-scroll or focus the pane.
+Refreshes preserve cursor ownership and viewport content as structural changes
+permit. Explicit pane operations may move selection to their result.
 
 Source text replaces method/filename titles even for imported marks. LSP symbol
 lookups are no longer performed. Imported frame context is still stored.
@@ -136,6 +151,34 @@ External changes block mutations instead of being overwritten. Reload with R
 or :Stringer reload. Invalid files report record line numbers and preserve the
 last valid runtime state. Save/discard drafts in manually opened raw storage
 buffers first. Content comparison is not a multi-process locking protocol.
+
+==============================================================================
+PANE HIGHLIGHTS                                          *stringer-highlights*
+
+StringerHeader          Persistent header background.
+StringerHeaderName      Emphasized codepath name.
+StringerHeaderInfo      Count row background.
+StringerHeaderCount     Emphasized counts.
+StringerEntryArrow      Downward entry marker; defaults to Special.
+StringerMarkNumber      Entry number; defaults to LineNr.
+StringerSource          Primary captured source text.
+StringerLocation        Secondary path text; defaults to Comment.
+StringerLineNumber      Source line number; defaults to Number.
+StringerChanged         Warning badge; defaults to DiagnosticWarn.
+StringerMissing         Missing location; defaults to DiagnosticError.
+StringerUnreadable      Read error; defaults to DiagnosticError.
+StringerUncaptured      Informational state; defaults to DiagnosticInfo.
+StringerChecking        Pending state; defaults to Comment.
+StringerHelp            Key hints; defaults to Comment.
+StringerNoteBadge       Note indicator; defaults to Special.
+StringerNote            Inline notes; defaults to Comment.
+StringerActive          Active-entry background, without a foreground override.
+StringerSkipped         Skipped content; defaults to Comment.
+
+Defaults adapt to ColorScheme events and respect explicit user highlight
+definitions. Status foregrounds remain visible on active entries. These are
+structured UI colors, not language syntax highlighting. The pane's downward
+arrows are separate from source-gutter -> signs. Tree-sitter remains deferred.
 
 ==============================================================================
 SOURCE SNAPSHOTS                                         *stringer-snapshots*
@@ -271,6 +314,9 @@ TypeScript source locations must already be present in the trace.
 
 ==============================================================================
 FORMAT AND COMPATIBILITY                                  *stringer-format*
+
+Version 0.6 uses the same storage format as 0.5; layout and styling do not change
+stored snapshots, notes, or navigation order.
 
 Versions 0.1-0.4 load without rewriting or silently capturing historical text.
 New paths and the next successful mutation use mark version 3. Untouched old

@@ -3,7 +3,7 @@
 Capture ordered codepaths and navigate them in Neovim. A codepath can span
 multiple repositories and contain multiple locations in the same file.
 
-Version **0.5** requires **Neovim 0.10+**. Pure Lua, with no dependencies.
+Version **0.6** requires **Neovim 0.10+**. Pure Lua, with no dependencies.
 
 ## Installation
 
@@ -49,7 +49,7 @@ Setup is optional. Defaults:
 ```lua
 require('stringer').setup({
   storage_dir = vim.fn.stdpath('data') .. '/stringer/paths',
-  pane_width = 48,
+  pane_width = '40%',
   gutter = true,
   gutter_sign = '->',
   gutter_priority = 10,
@@ -116,7 +116,7 @@ distance. If two entries are equally close, Stringer keeps the active entry when
 it is tied; otherwise it picks the earlier codepath entry. Repeated marks at the
 same location remain independently navigable.
 
-The active mark is highlighted with `StringerActive` (linked to `Visual`) and a
+The active mark is highlighted with a background-only `StringerActive` style and a
 `>` sign. Moving the pane cursor selects an entry for actions without changing
 the active mark. In an unmarked file, the previous active mark remains active.
 With no active mark, next starts at the first enabled entry and previous at the last.
@@ -144,18 +144,22 @@ The pane is a noneditable view, separate from the persisted file format:
 | `c` | Capture/refresh the selected mark's source snapshot and save. |
 | `q` | Close the pane; keep the codepath active. |
 
-Each mark has two rows: a captured source line, then a readable location ending
+The selected codepath's name stays visible in a styled window header (`winbar`),
+even when the list is scrolled. Counts and key hints have separate styles.
+
+Every mark starts with a downward `↓` arrow on its first row, followed by its
+number, statuses, and captured source text. Its second row shows a location ending
 in its filename and line number. Paths use the shortest trailing suffix that
 distinguishes files in the active path. Long locations are shortened from the
 left, preserving the useful ending rather than the directory prefix.
 
 ```text
-3 [changed] [note] task = Task.new(params[:task])
-   controllers/tasks_controller.rb:7
-   │ Builds the task before rendering.
-   │ Check behavior when the owner is missing.
-4 @owner = owner
-   models/task.rb:23
+↓ 3 [changed] [note] task = Task.new(params[:task])
+    controllers/tasks_controller.rb:7
+    │ Builds the task before rendering.
+    │ Check behavior when the owner is missing.
+↓ 4 @owner = owner
+    models/task.rb:23
 ```
 
 Source text always replaces filename/method titles, including imported frame
@@ -167,6 +171,48 @@ Both entry rows and any expanded note rows belong to the same mark: Enter, dd,
 K/J, s, and n work from any of them. Layout adapts to pane width and handles
 Unicode display widths. A pane buffer shared by windows uses the narrowest
 visible pane's available width. Stored paths remain absolute and unchanged.
+
+### Pane sizing and scrolling
+
+The default width is 40% of the editor's columns. Use another percentage between
+`'1%'` and `'99%'`, or an integer such as `pane_width = 72` for a fixed width.
+Sizing leaves at least 40 columns for the rest of the editor where possible;
+Neovim can impose additional limits when several windows share the space.
+
+An automatically sized pane follows editor resizes. Manual width adjustments
+are respected and remembered per tab across pane close/reopen for the session;
+they are only clamped when the editor becomes too narrow. Calling `setup` with
+an explicit `pane_width` resets manual-width preferences and applies that value.
+
+Navigating code does **not** scroll the list to the active mark or take focus.
+Refreshes preserve the pane cursor's entry and viewport position, adjusting for
+inserted/removed note rows where possible. Explicit pane actions such as moving
+an entry may adjust selection as expected.
+
+### Structured UI colors
+
+These are UI highlights, not language syntax highlighting. Status spans retain
+their colors on active entries because the default active style supplies only a
+background. Highlight groups follow the colorscheme and can be customized:
+
+| Group | Purpose/default |
+| --- | --- |
+| `StringerHeader`, `StringerHeaderName` | Persistent path header and emphasized name |
+| `StringerHeaderInfo`, `StringerHeaderCount` | Count row background and emphasized counts |
+| `StringerEntryArrow`, `StringerMarkNumber` | Downward arrows and subdued entry numbers |
+| `StringerSource` | Primary source text |
+| `StringerLocation`, `StringerLineNumber` | Secondary paths and emphasized line numbers |
+| `StringerChanged` | `[changed]`, linked to `DiagnosticWarn` |
+| `StringerMissing`, `StringerUnreadable` | Error states, linked to `DiagnosticError` |
+| `StringerUncaptured` | Informational state, linked to `DiagnosticInfo` |
+| `StringerChecking`, `StringerHelp` | Quiet pending state and key hints, linked to `Comment` |
+| `StringerNoteBadge`, `StringerNote` | Note indicator and note body |
+| `StringerActive`, `StringerSkipped` | Active background and skipped content |
+
+Defaults are reapplied on colorscheme changes without overriding explicit user
+definitions. Keep `StringerActive` background-only if you want badge foregrounds
+to remain distinct. The `↓` list marker is independent of the `->` source gutter
+sign. Tree-sitter and code syntax highlighting remain deferred.
 
 ## Source gutter indicators
 
@@ -347,6 +393,9 @@ intact. Unsaved edits in a manually opened raw storage buffer must be saved or
 discarded first. External-edit checks are content-based, not multi-process locks.
 
 ## Storage format and compatibility
+
+Version 0.6 uses the same storage format as 0.5; pane styling and sizing are
+presentation-only changes.
 
 Existing paths from 0.1–0.4 load without rewriting or silently capturing text.
 New paths and successful mutations use mark format v3. Untouched old marks keep

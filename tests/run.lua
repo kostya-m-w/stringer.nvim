@@ -139,7 +139,8 @@ test('pane is noneditable and navigation preserves the code window', function()
   no(pcall(vim.api.nvim_buf_set_lines, buf, 0, 1, false, { 'bad' }))
   yes(s.jump(1)); eq(vim.api.nvim_get_current_win(), codewin)
   eq(vim.api.nvim_win_get_buf(win), buf)
-  local marks = vim.api.nvim_buf_get_extmarks(buf, pane.namespace, 0, -1, {})
+  local marks = vim.tbl_filter(function(mark) return mark[4].line_hl_group == 'StringerActive' end,
+    vim.api.nvim_buf_get_extmarks(buf, pane.namespace, 0, -1, { details = true }))
   eq(#marks, 2); eq(marks[1][2], pane.first_mark_line - 1)
 end)
 test('moving marks saves immediately and preserves active entry identity', function()
@@ -201,7 +202,7 @@ test('rename updates storage, pane and future writes without changing marks', fu
   local old, buf, index = r.file, pane.buffer(r), r.index
   yes(s.rename('renamed')); eq(store.read(old), nil)
   eq(r.name, 'renamed'); eq(r.index, index); eq(pane.buffer(r), buf)
-  assert(rows(r)[1]:find('renamed'))
+  assert(vim.wo.winbar:find('renamed'))
   yes(s.remove(1)); eq(store.load('renamed').marks, r.marks)
   yes(s.undo()); eq(#store.load('renamed').marks, 3)
 end)
@@ -814,6 +815,135 @@ test('source preview supersedes frame labels without requesting LSP', function()
     assert(rows(r)[3]:find('two', 1, true)); assert(not rows(r)[3]:find('some_method', 1, true))
   end)
   vim.lsp.get_clients = original; yes(ok, err)
+end)
+
+test('downward arrows occur only on entry starts and retain byte-safe highlight spans', function()
+  local layout = require('stringer.layout')
+  local r = { name = 'arrows', index = 1, marks = {
+    { file = '/a/任务.rb', line = 1, note = 'two\nlines' }, { file = '/b/b.rb', line = 2, skipped = true },
+  } }
+  for _, width in ipairs({ 1, 8, 24, 80 }) do
+    local view = layout.build(r, width, function() return 'α = value', '[changed] ' end, true)
+    for index, range in pairs(view.ranges) do
+      assert(view.lines[range.first]:find('↓', 1, true) == 1)
+      for row = range.location, range.last do
+        assert(not view.lines[row]:find('↓', 1, true)); eq(view.row_to_index[row], index)
+      end
+    end
+    for _, span in ipairs(view.spans) do
+      assert(span.first >= 0 and span.last <= #view.lines[span.row] and span.last > span.first)
+    end
+  end
+end)
+test('status highlights are separate from source literals and survive active background', function()
+  local r = capture()
+  local buf = vim.fn.bufnr(file)
+  vim.api.nvim_buf_set_lines(buf, 1, 2, false, { 'different' })
+  yes(s.jump(1)); yes(s.show())
+  local function changed_spans()
+    return vim.tbl_filter(function(span) return span.group == 'StringerChanged' end, r.spans)
+  end
+  yes(vim.wait(500, function() return #changed_spans() > 0 end, 5))
+  local span = changed_spans()[1]
+  eq(rows(r)[span.row]:sub(span.first + 1, span.last), '[changed] ')
+  local active = vim.api.nvim_get_hl(0, { name = 'StringerActive', link = false })
+  assert(active.bg ~= nil); eq(active.fg, nil); eq(active.reverse, nil)
+  local statuses = { changed = 'StringerChanged', missing = 'StringerMissing', unreadable = 'StringerUnreadable',
+    uncaptured = 'StringerUncaptured', checking = 'StringerChecking' }
+  for badge, group in pairs(statuses) do
+    local view = require('stringer.layout').build(r, 100,
+      function() return 'literal [changed] text', '[' .. badge .. '] ' end, false)
+    local matches = vim.tbl_filter(function(item) return item.group == group end, view.spans)
+    eq(#matches, #r.marks)
+    for _, item in ipairs(matches) do eq(view.lines[item.row]:sub(item.first + 1, item.last), '[' .. badge .. '] ') end
+  end
+end)
+test('pane name lives in a distinct winbar and counts have dedicated spans', function()
+  local r = capture(); yes(s.show())
+  local win = vim.api.nvim_get_current_win()
+  local evaluated = vim.api.nvim_eval_statusline(vim.wo[win].winbar, { winid = win, maxwidth = 80, highlights = true })
+  assert(evaluated.str:find('STRINGER', 1, true)); assert(evaluated.str:find('demo', 1, true))
+  eq(rows(r)[1], '3 marks · 0 skipped · 0 hidden')
+  local counts = vim.tbl_filter(function(span) return span.group == 'StringerHeaderCount' end, r.spans)
+  eq(#counts, 3)
+  yes(s.rename('renamed')); assert(vim.wo[win].winbar:find('renamed', 1, true))
+  local old = vim.api.nvim_get_hl(0, { name = 'StringerChanged', link = true })
+  vim.api.nvim_set_hl(0, 'StringerChanged', { fg = '#123456' })
+  require('stringer.highlights').setup()
+  eq(vim.api.nvim_get_hl(0, { name = 'StringerChanged', link = false }).fg, 0x123456)
+  vim.api.nvim_set_hl(0, 'StringerChanged', old)
+end)
+test('adaptive sizing follows editor width and preserves manual width across reopening', function()
+  local columns = vim.o.columns
+  local ok, err = pcall(function()
+    vim.o.columns = 180
+    s.setup({ pane_width = '40%' })
+    capture(); yes(s.show())
+    local win = vim.api.nvim_get_current_win()
+    eq(vim.api.nvim_win_get_width(win), 72)
+    vim.o.columns = 200; pane.resize()
+    eq(pane.desired_width(), 80)
+    -- Headless frames can retain a narrower physical layout than 'columns'.
+    assert(vim.api.nvim_win_get_width(win) <= 80)
+    vim.api.nvim_win_set_width(win, 65); pane.resize()
+    vim.cmd('close'); yes(s.show())
+    eq(vim.api.nvim_win_get_width(0), 65)
+    vim.o.columns = 150; pane.resize()
+    eq(vim.api.nvim_win_get_width(0), 65)
+    vim.o.columns = 60; pane.resize(); pane.resize()
+    assert(vim.api.nvim_win_get_width(0) <= 19)
+    vim.o.columns = 150; pane.resize()
+    eq(vim.api.nvim_win_get_width(0), 65)
+    s.setup({ pane_width = 55 }); eq(vim.api.nvim_win_get_width(0), 55)
+    s.setup({ pane_width = '40%' }); eq(vim.api.nvim_win_get_width(0), 60)
+    vim.o.columns = 60; pane.resize()
+    assert(vim.api.nvim_win_get_width(0) <= 19)
+    no(pcall(s.setup, { pane_width = '100%' })); no(pcall(s.setup, { pane_width = 'wide' }))
+  end)
+  vim.o.columns = columns; pane.resize()
+  yes(ok, err)
+end)
+test('active changes preserve viewport ownership even when notes reflow above it', function()
+  edit(file)
+  local codewin = vim.api.nvim_get_current_win()
+  local marks = {}
+  for i = 1, 90 do marks[i] = { file = file, line = 1, snapshot = 'one' } end
+  marks[5].note = 'First\nSecond\nThird'
+  yes(store.create('long', marks)); yes(s.open('long')); yes(s.show())
+  local r, win = state.active, vim.api.nvim_get_current_win()
+  vim.api.nvim_win_set_cursor(win, { r.index_to_row[30], 0 }); vim.cmd('normal! zt')
+  vim.cmd('normal! 4j'); vim.cmd('redraw')
+  local saved = vim.fn.winsaveview()
+  local owner, top_owner = r.row_to_index[saved.lnum], r.row_to_index[saved.topline]
+  local function check()
+    local view = vim.api.nvim_win_call(win, vim.fn.winsaveview)
+    eq(r.row_to_index[view.lnum], owner); eq(r.row_to_index[view.topline], top_owner)
+    eq(vim.api.nvim_get_current_win(), codewin)
+  end
+  yes(s.jump(5)); check()
+  yes(s.jump(80)); check()
+  yes(s.jump(5)); check()
+  require('stringer.presentation').refresh(r); check()
+end)
+test('leaving a pane restores the original window header', function()
+  capture()
+  vim.wo.winbar = 'User header'
+  local codewin = vim.api.nvim_get_current_win()
+  yes(s.show())
+  local win = vim.api.nvim_get_current_win()
+  local original = pane.sizes[win].original_winbar
+  assert(vim.wo[win].winbar:find('STRINGER', 1, true))
+  vim.api.nvim_set_current_buf(vim.fn.bufnr(file))
+  eq(vim.wo[win].winbar, original)
+  eq(vim.wo[codewin].winbar, 'User header')
+end)
+test('closing a shared pane in one tab does not clear another tab header', function()
+  capture(); yes(s.show())
+  local first = vim.api.nvim_get_current_win()
+  vim.cmd('tabnew'); edit(other); yes(s.show())
+  assert(vim.wo[first].winbar:find('demo', 1, true))
+  vim.cmd('close')
+  assert(vim.wo[first].winbar:find('demo', 1, true))
 end)
 
 vim.api.nvim_set_current_dir(cwd)

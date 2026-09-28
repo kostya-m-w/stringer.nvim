@@ -2,7 +2,7 @@ local M = {}
 
 M.options = {
   storage_dir = vim.fn.stdpath('data') .. '/stringer/paths',
-  pane_width = 48,
+  pane_width = '40%',
   gutter = true,
   gutter_sign = '->',
   gutter_note_sign = '->', -- Deprecated, accepted for existing configurations.
@@ -19,8 +19,11 @@ function M.setup(opts)
   end
   local options = vim.tbl_extend('force', M.options, opts)
   assert(type(options.storage_dir) == 'string' and options.storage_dir ~= '', 'Stringer: storage_dir must be a nonempty string')
-  assert(type(options.pane_width) == 'number' and options.pane_width >= 1 and options.pane_width % 1 == 0,
-    'Stringer: pane_width must be a positive integer')
+  local width = options.pane_width
+  local percent = type(width) == 'string' and tonumber(width:match('^(%d+)%%$'))
+  assert((type(width) == 'number' and width >= 1 and width % 1 == 0)
+    or (percent and percent > 0 and percent < 100),
+    'Stringer: pane_width must be a positive integer or a percentage from 1% to 99%')
   for _, key in ipairs({ 'gutter', 'inline_notes', 'symbol_labels' }) do
     assert(type(options[key]) == 'boolean', 'Stringer: ' .. key .. ' must be a boolean')
   end

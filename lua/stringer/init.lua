@@ -42,6 +42,7 @@ end
 
 function M.setup(opts)
   config.setup(opts)
+  if opts and opts.pane_width ~= nil then pane.reset_widths() end
   M._initialize()
 end
 
@@ -392,14 +393,7 @@ end
 
 function M._initialize()
   local group = vim.api.nvim_create_augroup('Stringer', { clear = true })
-  local function highlights()
-    vim.api.nvim_set_hl(0, 'StringerActive', { default = true, link = 'Visual' })
-    vim.api.nvim_set_hl(0, 'StringerSkipped', { default = true, link = 'Comment' })
-    vim.api.nvim_set_hl(0, 'StringerNote', { default = true, link = 'Comment' })
-    vim.api.nvim_set_hl(0, 'StringerGutter', { default = true, fg = '#e5c07b', ctermfg = 3 })
-    vim.api.nvim_set_hl(0, 'StringerGutterActive', { default = true, fg = '#e5c07b', ctermfg = 3, bold = true })
-    vim.api.nvim_set_hl(0, 'StringerGutterSkipped', { default = true, fg = '#a08040', ctermfg = 3 })
-  end
+  local highlights = require('stringer.highlights').setup
   highlights()
   vim.api.nvim_create_autocmd('ColorScheme', { group = group, callback = highlights })
   vim.api.nvim_create_autocmd({ 'WinEnter', 'BufEnter', 'CursorMoved', 'CursorMovedI' }, {
@@ -420,7 +414,7 @@ function M._initialize()
     group = group, callback = function(args) presentation.enter(args.buf) end,
   })
   vim.api.nvim_create_autocmd({ 'WinResized', 'VimResized', 'DirChanged' }, {
-    group = group, callback = function() presentation.queue_pane(state.active) end,
+    group = group, callback = function() pane.resize(); presentation.queue_pane(state.active) end,
   })
   vim.api.nvim_create_autocmd({ 'BufWritePost', 'FileChangedShellPost' }, {
     group = group, callback = function(args) presentation.changed(args.buf) end,

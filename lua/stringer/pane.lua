@@ -5,9 +5,58 @@ local source = require('stringer.source')
 local M = {
   buffers = {},
   windows = {},
+  sizes = {},
+  manual_widths = {},
   namespace = vim.api.nvim_create_namespace('stringer.active'),
   first_mark_line = 3,
 }
+
+function M.desired_width()
+  local width = config.options.pane_width
+  if type(width) == 'string' then width = math.floor(vim.o.columns * tonumber(width:sub(1, -2)) / 100) end
+  return math.max(1, math.min(width, math.max(1, vim.o.columns - 41)))
+end
+
+function M.remember_width(win)
+  local size = M.sizes[win]
+  if size and vim.api.nvim_win_is_valid(win) then
+    local width = vim.api.nvim_win_get_width(win)
+    if size.columns == vim.o.columns and width ~= size.width then
+      size.manual = true
+      M.manual_widths[vim.api.nvim_win_get_tabpage(win)] = width
+    end
+    size.width = width
+  end
+end
+
+function M.resize()
+  for win, size in pairs(M.sizes) do
+    if not vim.api.nvim_win_is_valid(win) or vim.bo[vim.api.nvim_win_get_buf(win)].filetype ~= 'stringer' then
+      M.sizes[win] = nil
+    elseif size.columns ~= vim.o.columns then
+      local requested = size.manual and (M.manual_widths[vim.api.nvim_win_get_tabpage(win)] or size.width)
+        or M.desired_width()
+      requested = math.max(1, math.min(requested, math.max(1, vim.o.columns - 41)))
+      vim.api.nvim_win_set_width(win, requested)
+      size.width, size.columns = vim.api.nvim_win_get_width(win), vim.o.columns
+    else
+      M.remember_width(win)
+    end
+  end
+end
+
+function M.reset_widths()
+  M.manual_widths = {}
+  for _, size in pairs(M.sizes) do size.manual, size.columns = false, nil end
+  M.resize()
+end
+
+local function header(record, win)
+  if vim.api.nvim_win_get_config(win).relative ~= '' then return end
+  local name = layout.fit(record.name, math.max(1, vim.api.nvim_win_get_width(win) - 12))
+  vim.wo[win].winbar = '%#StringerHeader# STRINGER · %#StringerHeaderName#'
+    .. name:gsub('%%', '%%%%') .. '%#StringerHeader#%='
+end
 
 function M.buffer(record)
   local buf = M.buffers[record.file]
@@ -51,12 +100,12 @@ function M.highlight(record)
     return
   end
   vim.api.nvim_buf_clear_namespace(buf, M.namespace, 0, -1)
-  for index, range in pairs(record.ranges or {}) do
-    for row = range.first, range.last do
-      local group = row > range.location and 'StringerNote'
-        or (record.marks[index].skipped and 'StringerSkipped' or nil)
-      if group then vim.api.nvim_buf_set_extmark(buf, M.namespace, row - 1, 0, { line_hl_group = group }) end
-    end
+  vim.api.nvim_buf_set_extmark(buf, M.namespace, 0, 0, { line_hl_group = 'StringerHeaderInfo' })
+  for _, span in ipairs(record.spans or {}) do
+    vim.api.nvim_buf_set_extmark(buf, M.namespace, span.row - 1, span.first, {
+      end_col = span.last, hl_group = span.group, hl_mode = 'combine',
+      priority = (span.group == 'StringerLineNumber' or span.group == 'StringerHeaderCount') and 220 or 200,
+    })
   end
   if state.active == record and record.index and record.marks[record.index] then
     local range = (record.ranges or {})[record.index]
@@ -78,7 +127,7 @@ function M.width(record)
     local available = math.max(1, vim.api.nvim_win_get_width(win) - (info and info.textoff or 0))
     width = width and math.min(width, available) or available
   end
-  return width or math.max(1, config.options.pane_width - 2)
+  return width or math.max(1, M.desired_width() - 2)
 end
 
 function M.refresh(record, selected)
@@ -92,15 +141,23 @@ function M.refresh(record, selected)
     local cursor = vim.api.nvim_win_get_cursor(win)
     local index = previous_rows[cursor[1]]
     local range = index and (record.ranges or {})[index]
-    cursors[win] = { row = cursor[1], index = index, offset = range and cursor[1] - range.first or 0 }
+    local saved = vim.api.nvim_win_call(win, vim.fn.winsaveview)
+    local top_index = previous_rows[saved.topline]
+    local top_range = top_index and (record.ranges or {})[top_index]
+    cursors[win] = { row = cursor[1], index = index, offset = range and cursor[1] - range.first or 0,
+      view = saved, top_index = top_index, top_offset = top_range and saved.topline - top_range.first or 0 }
+    header(record, win)
   end
   local view = layout.build(record, M.width(record), source.preview, config.options.inline_notes and state.active == record)
   local lines = view.lines
   record.row_to_index, record.index_to_row, record.ranges = view.row_to_index, view.index_to_row, view.ranges
-  vim.bo[buf].modifiable = true
-  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-  vim.bo[buf].modified = false
-  vim.bo[buf].modifiable = false
+  record.spans = view.spans
+  if not vim.deep_equal(vim.api.nvim_buf_get_lines(buf, 0, -1, false), lines) then
+    vim.bo[buf].modifiable = true
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+    vim.bo[buf].modified = false
+    vim.bo[buf].modifiable = false
+  end
   for win, cursor in pairs(cursors) do
     local index = (win == vim.api.nvim_get_current_win() and selected) or cursor.index
     local row = index and record.index_to_row[index]
@@ -119,7 +176,14 @@ function M.refresh(record, selected)
     if range and not (selected and win == vim.api.nvim_get_current_win()) then
       row = math.min(row + cursor.offset, range.last)
     end
-    vim.api.nvim_win_set_cursor(win, { row or math.min(cursor.row, #lines), 0 })
+    local restored = cursor.view
+    restored.lnum = row or math.min(cursor.row, #lines)
+    restored.col = math.min(restored.col, math.max(0, #lines[restored.lnum] - 1))
+    local top = cursor.top_index and record.ranges[cursor.top_index]
+    restored.topline = top and math.min(top.first + cursor.top_offset, top.last) or math.min(restored.topline, #lines)
+    -- Restore both cursor ownership and viewport; background active-mark
+    -- changes must not scroll the pane to the newly active entry.
+    vim.api.nvim_win_call(win, function() vim.fn.winrestview(restored) end)
   end
   M.highlight(record)
 end
@@ -142,6 +206,17 @@ local function prepare(record)
   vim.bo[buf].swapfile = false
   vim.bo[buf].filetype = 'stringer'
   vim.bo[buf].undolevels = -1
+  local group = vim.api.nvim_create_augroup('StringerPane' .. buf, { clear = true })
+  vim.api.nvim_create_autocmd('BufWinLeave', {
+    group = group, buffer = buf, callback = function()
+      local win = vim.api.nvim_get_current_win()
+      if vim.api.nvim_win_get_buf(win) == buf then
+        M.remember_width(win)
+        local size = M.sizes[win]
+        if size then vim.wo[win].winbar = size.original_winbar end
+      end
+    end,
+  })
   local mappings = {
     ['<CR>'] = { 'jump', 'Jump to mark' },
     dd = { 'remove', 'Remove mark' },
@@ -171,6 +246,7 @@ local function prepare(record)
     end, { buffer = buf, silent = true, desc = action[2] })
   end
   vim.keymap.set('n', 'q', function()
+    M.remember_width(vim.api.nvim_get_current_win())
     local ok, err = pcall(vim.cmd.close)
     if not ok then
       vim.notify('Stringer: ' .. tostring(err), vim.log.levels.ERROR)
@@ -206,8 +282,12 @@ function M.show(record)
   local codewin = require('stringer.navigation').window()
   vim.api.nvim_cmd({ cmd = 'vsplit', mods = { split = 'botright' } }, {})
   local win = vim.api.nvim_get_current_win()
+  local original_winbar = vim.wo[win].winbar
   vim.api.nvim_win_set_buf(win, buf)
-  vim.api.nvim_win_set_width(win, config.options.pane_width)
+  local manual = M.manual_widths[tab]
+  vim.api.nvim_win_set_width(win, math.max(1, math.min(manual or M.desired_width(), math.max(1, vim.o.columns - 41))))
+  M.sizes[win] = { width = vim.api.nvim_win_get_width(win), columns = vim.o.columns,
+    manual = manual ~= nil, original_winbar = original_winbar }
   vim.wo[win].number = false
   vim.wo[win].relativenumber = false
   vim.wo[win].signcolumn = 'yes:1'
