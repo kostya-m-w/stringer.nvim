@@ -13,9 +13,16 @@ stringer._initialize()
 local commands = {
   'new', 'open', 'show', 'add', 'next', 'prev', 'rename', 'remove', 'move-up', 'move-down', 'undo', 'reload',
   'skip', 'hide-skipped', 'note', 'import', 'import-report', 'cancel-import', 'copy', 'refresh-snapshot',
+  'fisheye', 'fisheye-close', 'fisheye-range', 'fisheye-notes', 'fisheye-refresh',
 }
 vim.api.nvim_create_user_command('Stringer', function(args)
   local subcommand, name = args.fargs[1], args.fargs[2]
+  if subcommand == 'fisheye-range' then
+    if #args.fargs ~= 3 then
+      vim.notify('Usage: Stringer fisheye-range <previous> <next>', vim.log.levels.ERROR)
+    else stringer.fisheye_range(tonumber(args.fargs[2]), tonumber(args.fargs[3])) end
+    return
+  end
   local valid = vim.tbl_contains(commands, subcommand)
   local named = { new = true, open = true, rename = true, import = true, copy = true }
   if not valid or #args.fargs > 2 or (name and not named[subcommand]) then

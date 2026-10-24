@@ -13,6 +13,8 @@ end
 function M.persist(record, marks, index, selected, undoing)
   local ok, err = M.clean(record)
   if not ok then return nil, err end
+  ok, err = require('stringer.fisheye').preflight(record, marks, index)
+  if not ok then return nil, err end
   local lines = codec.encode(marks)
   local valid, errors = codec.decode(lines)
   if not valid then return nil, codec.error_message(errors) end

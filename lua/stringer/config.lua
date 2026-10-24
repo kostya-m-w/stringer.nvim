@@ -9,6 +9,10 @@ M.options = {
   gutter_priority = 10,
   inline_notes = true,
   symbol_labels = true, -- Deprecated: previews always show captured source.
+  fisheye_previous = 2,
+  fisheye_next = 2,
+  fisheye_notes = true,
+  fisheye_note_width = '35%',
 }
 
 function M.setup(opts)
@@ -34,6 +38,16 @@ function M.setup(opts)
   end
   assert(type(options.gutter_priority) == 'number' and options.gutter_priority >= 0
     and options.gutter_priority % 1 == 0, 'Stringer: gutter_priority must be a nonnegative integer')
+  for _, key in ipairs({ 'fisheye_previous', 'fisheye_next' }) do
+    assert(type(options[key]) == 'number' and options[key] >= 0 and options[key] % 1 == 0,
+      'Stringer: ' .. key .. ' must be a nonnegative integer')
+  end
+  assert(type(options.fisheye_notes) == 'boolean', 'Stringer: fisheye_notes must be a boolean')
+  local note_width = options.fisheye_note_width
+  local note_percent = type(note_width) == 'string' and tonumber(note_width:match('^(%d+)%%$'))
+  assert((type(note_width) == 'number' and note_width >= 1 and note_width % 1 == 0)
+    or (note_percent and note_percent > 0 and note_percent < 100),
+    'Stringer: fisheye_note_width must be positive columns or a percentage from 1% to 99%')
   options.storage_dir = vim.fs.normalize(vim.fn.fnamemodify(options.storage_dir, ':p'))
   M.options = options
 end

@@ -18,6 +18,9 @@ function M.setup()
   set('StringerHeaderInfo', { bg = header_bg, fg = normal.fg })
   set('StringerHeaderCount', { bg = header_bg, fg = title_fg, bold = true })
   set('StringerSource', { fg = normal.fg })
+  set('StringerFishMain', { bg = header_bg, fg = title_fg, bold = true })
+  set('StringerFishPreview', { bg = header_bg, fg = normal.fg })
+  set('StringerFishLine', { bg = active_bg, ctermbg = visual.ctermbg or (dark and 237 or 254) })
   local links = {
     StringerEntryArrow = 'Special', StringerMarkNumber = 'LineNr', StringerHelp = 'Comment',
     StringerLocation = 'Comment', StringerLineNumber = 'Number', StringerSkipped = 'Comment',

@@ -5,6 +5,7 @@ local state = require('stringer.state')
 local navigation = require('stringer.navigation')
 local pane = require('stringer.pane')
 local presentation = require('stringer.presentation')
+local fisheye = require('stringer.fisheye')
 local M = {}
 
 local function fail(err)
@@ -26,6 +27,8 @@ local function activate(record)
   if not ok then
     return fail(err)
   end
+  ok, err = fisheye.preflight(record, record.marks, record.index)
+  if not ok then return fail(err) end
   ok, err = pane.activate(record)
   if not ok then
     return fail(err)
@@ -42,6 +45,7 @@ end
 
 function M.setup(opts)
   config.setup(opts)
+  fisheye.configure(opts)
   if opts and opts.pane_width ~= nil then pane.reset_widths() end
   M._initialize()
 end
@@ -150,6 +154,7 @@ function M.add()
 end
 
 function M.sync()
+  if fisheye.in_tab() or require('stringer.fisheye.state').busy then return end
   local record = state.active
   if record and not navigation.navigating then
     local index = navigation.nearest(record)
@@ -163,7 +168,9 @@ end
 local function selection(record, index)
   if index == nil then
     M.sync()
-    index = pane.selected(record)
+    local view = require('stringer.fisheye.state').view
+    local role = fisheye.in_tab() and view.roles[vim.api.nvim_get_current_win()]
+    index = role and role.index or pane.selected(record)
   end
   if type(index) ~= 'number' or index % 1 ~= 0 or not record.marks[index] then
     return nil, 'Select a mark first'
@@ -359,7 +366,8 @@ function M.jump(index)
     return fail('Mark index must be an integer')
   end
   local ok
-  ok, err = navigation.jump(record, index)
+  if fisheye.in_tab() then ok, err = fisheye.jump(record, index)
+  else ok, err = navigation.jump(record, index) end
   if not ok then
     return fail(err)
   end
@@ -390,6 +398,17 @@ end
 function M.prev()
   return step(-1)
 end
+
+local function fish_call(method, ...)
+  local ok, err = fisheye[method](...)
+  if not ok then return fail(err) end
+  return true
+end
+function M.fisheye() return fish_call('open') end
+function M.fisheye_close() return fish_call('close') end
+function M.fisheye_range(previous, following) return fish_call('range', previous, following) end
+function M.fisheye_notes() return fish_call('toggle_notes') end
+function M.fisheye_refresh() return fish_call('refresh') end
 
 function M._initialize()
   local group = vim.api.nvim_create_augroup('Stringer', { clear = true })
@@ -423,6 +442,7 @@ function M._initialize()
     group = group, callback = function() if state.active then presentation.sources(state.active, true) end end,
   })
   navigation.remember()
+  fisheye.install()
   if state.active then presentation.refresh(state.active)
   else require('stringer.gutter').refresh(nil) end
 end

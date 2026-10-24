@@ -3,7 +3,7 @@
 Capture ordered codepaths and navigate them in Neovim. A codepath can span
 multiple repositories and contain multiple locations in the same file.
 
-Version **0.6** requires **Neovim 0.10+**. Pure Lua, with no dependencies.
+Version **0.7** requires **Neovim 0.10+**. Pure Lua, with no dependencies.
 
 ## Installation
 
@@ -54,6 +54,10 @@ require('stringer').setup({
   gutter_sign = '->',
   gutter_priority = 10,
   inline_notes = true,
+  fisheye_previous = 2,
+  fisheye_next = 2,
+  fisheye_notes = true,
+  fisheye_note_width = '35%',
 })
 ```
 
@@ -90,6 +94,11 @@ require('stringer').setup({
 | `:Stringer import [name]` | Import the whole buffer's stacktrace into a new codepath. |
 | `:Stringer import-report` | Show the most recent import's results and excluded frames. |
 | `:Stringer cancel-import` | Cancel pending source lookup or an import prompt. |
+| `:Stringer fisheye` | Open/focus the dedicated fish-eye tab. |
+| `:Stringer fisheye-close` | Close fish-eye mode and return to the origin. |
+| `:Stringer fisheye-range <previous> <next>` | Set the number of neighboring marks on each side. |
+| `:Stringer fisheye-notes` | Toggle all fish-eye note subsplits. |
+| `:Stringer fisheye-refresh` | Retry targets, rebuild, and recenter the fish-eye view. |
 
 In the pane, the selected mark is the row under its cursor. From code, actions
 use the active mark. Moving marks does not wrap at the ends; navigation does.
@@ -127,6 +136,8 @@ It never replaces the pane with code. Open a code window if the pane is the only
 window in the tab. Neovim's `'hidden'` and modified-buffer safeguards are honored.
 
 ## Dedicated mark view
+
+For a multi-window source view, see [Fish-eye view](#fish-eye-view).
 
 The pane is a noneditable view, separate from the persisted file format:
 
@@ -213,6 +224,94 @@ Defaults are reapplied on colorscheme changes without overriding explicit user
 definitions. Keep `StringerActive` background-only if you want badge foregrounds
 to remain distinct. The `↓` list marker is independent of the `->` source gutter
 sign. Tree-sitter and code syntax highlighting remain deferred.
+
+## Fish-eye view
+
+Open an active codepath, then run:
+
+```vim
+:Stringer fisheye
+```
+
+Stringer creates one managed tab with the path pane on the right and live source
+windows stacked in path order on the left. The active mark occupies the largest
+**MAIN** window; by default there are up to two previous and two next marks.
+Reopening the command focuses this tab. Your original tab layout is retained.
+
+Each step away from main receives approximately `1 / 1.618` of its neighbor's
+height. Minimum text heights, window chrome, and screen space constrain rounding.
+Farthest previews are omitted when the screen is short and return when it grows.
+Preview selection stops at path boundaries, with no repeated/filler windows;
+next/previous navigation itself remains cyclic.
+
+### Navigation and editing
+
+- Use the existing `next`, `prev`, or path-pane Enter to change the main mark.
+- Focusing a preview, by mouse or window-navigation keys, **promotes it to main**
+  before editing. Ordinary source buffers remain shared; buffer-level readonly
+  flags are not changed to implement previews.
+- Moving the code cursor does not select a new nearest mark or rebuild the view
+  while in fish-eye mode. Ordinary tabs retain proximity-based selection.
+- Marked lines are centered on navigation and highlighted separately per window.
+  Two marks in one file can therefore show different highlighted lines in the
+  same buffer. Editing remains live across those views.
+- Edits do not constantly recenter the main window. If editing makes its stored
+  line stale, the header indicates it; explicit refresh/navigation resolves the
+  location again.
+- All skipped marks are excluded from neighbors, regardless of the path pane's
+  filter. An explicit jump can still make a skipped mark main.
+- The path list retains its no-auto-scroll behavior.
+
+### Asymmetric layouts and notes
+
+```vim
+:Stringer fisheye-range 4 0
+:Stringer fisheye-range 3 1
+:Stringer fisheye-range 0 0
+```
+
+Counts are nonnegative integers and apply independently. Four previous and no
+next marks puts main at the bottom; the reverse puts it at the top. Zero on both
+sides shows main only. Requested counts survive temporary screen-size reductions.
+
+Nonempty notes appear in read-only subsplits **to the right of their own code
+row**, enabled by default. `fisheye-notes` toggles every such panel together, and
+the preference survives close/reopen for this Neovim session. It does not alter
+notes, the note editor, or the path pane's inline-note option. Notes windows can
+be focused for scrolling/copying; Enter promotes their code mark, and `n` opens
+the existing note editor for that mark.
+
+`fisheye_note_width` is columns or a percentage of the code+notes row width.
+Notes are temporarily suppressed when space cannot support both code and notes;
+their global preference remains enabled and panels return when space permits.
+Source syntax highlighting continues to use your ordinary Neovim configuration.
+
+### Unavailable targets and lifecycle
+
+Missing/unreadable files and stale lines appear as labeled read-only placeholders,
+including in main. Navigation can continue through them. Use `fisheye-refresh`
+after restoring a target. Ordinary-tab jumps retain their existing error behavior.
+
+Rebuilds honor modified-buffer safeguards and destructive `bufhidden` policies.
+If a transition would abandon a modified buffer that cannot be safely hidden,
+save it or change the buffer policy first. No source buffer is force-discarded.
+The existing note editor's unsaved drafts are preserved separately from its
+read-only fish-eye panels.
+
+Use `fisheye-close` to close the managed tab and return to the origin when it
+still exists. If the origin is gone and no other tab remains, an ordinary empty
+tab is created. Source edits remain in their buffers. A manually closed preview
+is reconciled while the fish-eye tab survives; manually closing the whole tab
+does not recreate it.
+
+Opening/replacing a managed code window with unrelated user content stops
+fish-eye management and keeps the windows and edits intact. Re-enter with
+`:Stringer fisheye` when ready. There is one global active codepath: changes from
+another tab are reconciled when you return, without background focus stealing.
+View operations create no mark history and do not write codepath files.
+
+Fish-eye highlight groups are `StringerFishMain`, `StringerFishPreview`, and
+`StringerFishLine` (background-only, preserving source foreground colors).
 
 ## Source gutter indicators
 
@@ -394,7 +493,7 @@ discarded first. External-edit checks are content-based, not multi-process locks
 
 ## Storage format and compatibility
 
-Version 0.6 uses the same storage format as 0.5; pane styling and sizing are
+Versions 0.6 and 0.7 use the same storage format as 0.5; view settings are
 presentation-only changes.
 
 Existing paths from 0.1–0.4 load without rewriting or silently capturing text.
@@ -433,6 +532,8 @@ replaced by explicit, immediately persisted mark actions.
 - `skip(index?)`, `hide_skipped()`, `note(index?)`
 - `refresh_snapshot(index?)`
 - `import(name?)`, `import_report()`, `cancel_import()`
+- `fisheye()`, `fisheye_close()`, `fisheye_range(previous, next)`
+- `fisheye_notes()`, `fisheye_refresh()`
 
 Indices refer to the full stored mark list, including hidden entries, and are
 one-based. Omitted action indices use pane selection or the active
@@ -450,8 +551,8 @@ an error for invalid options.
 - Marks require a file saved at least once. Modified buffers use the current
   cursor line.
 - Active path, navigation position, and undo history do not survive a restart.
-- Split-based code navigation, Tree-sitter selection, automatic location
-  tracking, and fish-eye view are deferred.
+- Tree-sitter selection, automatic location tracking, and runtime execution
+  contexts remain deferred.
 
 ## Development
 
@@ -460,6 +561,8 @@ From the repository root:
 ```sh
 nvim --headless -u NONE -l tests/run.lua
 nvim --headless -u NONE -l tests/ui.lua
+nvim --headless -u NONE -l tests/fisheye.lua
+nvim --headless -u NONE -l tests/fisheye_ui.lua
 ```
 
 The regression suite covers persistence, proximity selection, cyclic navigation,

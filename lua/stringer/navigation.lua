@@ -1,12 +1,17 @@
 local state = require('stringer.state')
 local uv = vim.uv or vim.loop
 local M = {}
+local fish = require('stringer.fisheye.state')
+local function fish_tab()
+  return fish.view and vim.api.nvim_tabpage_is_valid(fish.view.tab)
+    and vim.api.nvim_get_current_tabpage() == fish.view.tab
+end
 
 -- Only a focused code window influences proximity. Pane cursor movement must
 -- not change the active mark. Keep the current entry when distances tie.
 function M.nearest(record)
   local win = vim.api.nvim_get_current_win()
-  if M.navigating or not M.eligible(win) then
+  if M.navigating or fish.busy or fish_tab() or not M.eligible(win) then
     return record.index
   end
   local file = vim.fs.normalize(vim.api.nvim_buf_get_name(0))
@@ -31,6 +36,11 @@ function M.eligible(win)
 end
 
 function M.remember()
+  if fish.busy then return end
+  if fish_tab() then
+    if fish.view.main and vim.api.nvim_win_is_valid(fish.view.main) then state.windows[fish.view.tab] = fish.view.main end
+    return
+  end
   local win = vim.api.nvim_get_current_win()
   if M.eligible(win) then
     state.windows[vim.api.nvim_get_current_tabpage()] = win
@@ -38,6 +48,10 @@ function M.remember()
 end
 
 function M.window()
+  if fish_tab() then
+    if fish.view.main and vim.api.nvim_win_is_valid(fish.view.main) then return fish.view.main end
+    return nil, 'Fish-eye main window is unavailable; use :Stringer fisheye-refresh'
+  end
   local current = vim.api.nvim_get_current_win()
   if M.eligible(current) then
     return current

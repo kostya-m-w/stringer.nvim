@@ -51,6 +51,7 @@ function M.changed(buf)
     local record = state.active
     if not vim.api.nvim_buf_is_loaded(buf) then return end
     gutter.refresh(record, buf)
+    require('stringer.fisheye').source_changed(buf)
     if relevant(record, buf) then
       M.sources(record)
       M.queue_pane(record)
@@ -83,6 +84,7 @@ function M.refresh(record, selected)
     if relevant(record, buf) then M.watch(buf) end
   end
   M.rendering = false
+  require('stringer.fisheye').changed(record)
 end
 
 function M.enter(buf)

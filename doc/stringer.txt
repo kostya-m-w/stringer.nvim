@@ -1,6 +1,6 @@
 *stringer.txt*  Ordered codepaths for Neovim                         *stringer*
 
-Stringer 0.6 requires Neovim 0.10 or newer. No dependencies.
+Stringer 0.7 requires Neovim 0.10 or newer. No dependencies.
 
 ==============================================================================
 QUICK START                                                 *stringer-start*
@@ -42,6 +42,13 @@ COMMANDS                                                 *:Stringer*
 :Stringer import [name]  Import whole current buffer into a new codepath.
 :Stringer import-report  Show last import's results and excluded frames.
 :Stringer cancel-import  Cancel pending lookup or import prompt.
+:Stringer fisheye        Open/focus the dedicated fish-eye tab.
+:Stringer fisheye-close  Close fish-eye mode and return to its origin.
+:Stringer fisheye-range {previous} {next}
+                        Set independently requested neighbor counts.
+:Stringer fisheye-notes  Toggle all fish-eye note subsplits.
+:Stringer fisheye-refresh
+                        Retry targets, rebuild and recenter the view.
 
 Names use letters, numbers, hyphens, and underscores. Creating and renaming
 reject existing names. One codepath is active at a time. No global mappings
@@ -79,6 +86,10 @@ Setup is optional: >lua
       gutter_sign = '->',
       gutter_priority = 10,
       inline_notes = true,
+      fisheye_previous = 2,
+      fisheye_next = 2,
+      fisheye_notes = true,
+      fisheye_note_width = '35%',
     })
 <
 storage_dir             Independent cross-repository codepath storage.
@@ -90,6 +101,10 @@ gutter_sign             Shared mark sign; one or two display cells.
 gutter_note_sign        Deprecated no-op, accepted for old configurations.
 gutter_priority         Nonnegative sign priority; default 10.
 inline_notes            Automatically expand notes below the active entry.
+fisheye_previous        Requested previous marks; nonnegative integer.
+fisheye_next            Requested next marks; nonnegative integer.
+fisheye_notes           Initial session-global fish-eye notes visibility.
+fisheye_note_width      Columns or percentage of each code+notes row.
 symbol_labels           Deprecated no-op; previews always show source text.
 StringerActive          Background-only active-mark highlight.
 StringerNote            Inline note highlight, defaults to Comment.
@@ -179,6 +194,67 @@ Defaults adapt to ColorScheme events and respect explicit user highlight
 definitions. Status foregrounds remain visible on active entries. These are
 structured UI colors, not language syntax highlighting. The pane's downward
 arrows are separate from source-gutter -> signs. Tree-sitter remains deferred.
+
+==============================================================================
+FISH-EYE VIEW                                            *stringer-fisheye*
+
+:Stringer fisheye opens one managed tab with a right-side path pane and ordered
+source rows to its left. The active mark is the largest MAIN row, with up to two
+previous and two next rows by default. Reopening focuses the same tab.
+
+Heights fall off by the golden ratio (approximately 1.618) per step from main,
+subject to minimum window sizes and integer rounding. Short screens omit the
+farthest previews first; they return when space permits. Boundaries show fewer
+rows without duplicates or fillers. Explicit next/prev navigation stays cyclic.
+
+Use normal Stringer next/prev and path-pane Enter. Focusing a preview promotes
+its mark to main before editing. Source buffers are shared and their modifiable/
+readonly flags are not changed. Mouse and Ctrl-W navigation both promote rows.
+Cursor motion inside code does not run proximity selection in fish-eye mode.
+Ordinary tabs retain their normal behavior.
+
+Each marked line is centered on navigation and highlighted per window, so marks
+in the same file can have different highlighted target lines. Typing does not
+continually recenter/rebuild the view. A line made stale during editing is flagged;
+explicit refresh/navigation retries resolution. The path pane does not auto-scroll.
+
+All skipped marks are excluded from neighbors, even when visible in the list.
+Explicit jumps can still select a skipped main mark. Empty/all-skipped paths get
+an explanatory main placeholder when there is no explicit anchor.
+
+Asymmetric ranges preserve path order: >
+    :Stringer fisheye-range 4 0
+    :Stringer fisheye-range 3 1
+    :Stringer fisheye-range 0 0
+<
+The first puts MAIN at the bottom. Both counts accept zero and persist for the
+session, including across view close/reopen and temporary screen reductions.
+
+Nonempty notes have read-only windows to the right of their code row, enabled
+by default. fisheye-notes toggles them all and retains the preference across
+close/reopen. This does not affect inline notes in the path pane or stored data.
+Notes windows can be focused for scrolling/copying; Enter promotes their code
+mark, and n opens the existing note editor. Narrow layouts temporarily suppress
+panels without disabling the global preference.
+
+Missing/unreadable files and stale lines use labeled placeholders, including
+MAIN. fisheye-refresh retries after sources are fixed. Ordinary-tab navigation
+continues to report errors without jumping to unavailable targets.
+
+Rebuilds and close honor modified-buffer and destructive bufhidden safeguards.
+Save blocked buffers or use a nondestructive hidden-buffer policy to proceed.
+Source buffers are never force-discarded; unsaved note-editor drafts are preserved.
+
+fisheye-close returns to the origin when possible. If no other tab exists, it
+creates an ordinary empty tab. Closing a preview is reconciled; manually closing
+the entire tab never recreates it. Replacing a managed source window with user
+content ends management and preserves windows/edits. Enter fish-eye mode again
+explicitly when desired.
+
+There is still one global active path. Changes made outside fish-eye mode are
+reconciled on return, without background tab/focus changes. View actions do not
+write codepaths or alter undo history. Highlight groups: StringerFishMain,
+StringerFishPreview, and StringerFishLine (background-only source-line highlight).
 
 ==============================================================================
 SOURCE SNAPSHOTS                                         *stringer-snapshots*
@@ -315,7 +391,7 @@ TypeScript source locations must already be present in the trace.
 ==============================================================================
 FORMAT AND COMPATIBILITY                                  *stringer-format*
 
-Version 0.6 uses the same storage format as 0.5; layout and styling do not change
+Versions 0.6 and 0.7 use the same storage format as 0.5; view changes do not change
 stored snapshots, notes, or navigation order.
 
 Versions 0.1-0.4 load without rewriting or silently capturing historical text.
@@ -341,8 +417,8 @@ past EOF report errors without changing the active mark. Files must have been
 saved before marking; modified buffers record the current cursor line.
 
 Active path, position and undo history are not restored across restarts. Use
-:Stringer open. Split navigation, Tree-sitter-based selection, automatic mark
-relocation, and fish-eye view are deferred.
+:Stringer open. Tree-sitter-based selection, automatic mark relocation, and
+runtime execution contexts remain deferred.
 
 ==============================================================================
 LUA API                                                  *stringer-api*
@@ -355,6 +431,8 @@ require('stringer') exposes:
     skip(index?), hide_skipped(), note(index?)
     refresh_snapshot(index?)
     import(name?), import_report(), cancel_import()
+    fisheye(), fisheye_close(), fisheye_range(previous, next)
+    fisheye_notes(), fisheye_refresh()
 
 Indices address the full stored list, including hidden marks, and are one-based.
 Omitted action indices use the selected/active mark.
