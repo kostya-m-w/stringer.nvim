@@ -311,7 +311,7 @@ test('v1 reads without rewrite and upgrades on mutation; metadata round trips', 
   vim.fn.writefile(lines, r.file)
   local before = store.read(r.file)
   yes(s.reload()); eq(store.read(r.file), before)
-  yes(s.skip(1)); assert(store.read(r.file):find('"mark_version":3', 1, true))
+  yes(s.skip(1)); assert(store.read(r.file):find('"mark_version":4', 1, true))
   local marks = { { file = file, line = 1, skipped = true, note = 'α\nsecond line\n', frame = 'original frame' } }
   eq(codec.decode(codec.encode(marks)), marks)
   lines = codec.encode(marks)
@@ -493,13 +493,13 @@ end)
 test('import write failure leaves no new file and preserves active path', function()
   local r = capture(); vim.cmd('enew')
   vim.api.nvim_buf_set_lines(0, 0, -1, false, { 'at local (' .. file .. ':2:1)' })
-  local original = uv.fs_rename
-  uv.fs_rename = function() return nil, 'injected import failure' end
+  local original = uv.fs_link
+  uv.fs_link = function() return nil, 'injected import failure' end
   local ok, err = pcall(function()
     yes(s.import('failed')); eq(state.active, r); no(store.load('failed'))
     assert(require('stringer.import').report[1]:find('not saved', 1, true))
   end)
-  uv.fs_rename = original; yes(ok, err)
+  uv.fs_link = original; yes(ok, err)
 end)
 test('reloading a visible filtered path rebuilds rows for the new snapshot', function()
   local r = capture(); yes(s.show()); yes(s.skip(2)); yes(s.hide_skipped())
@@ -649,7 +649,7 @@ test('v3 distinguishes absent, empty and exact snapshots and rejects invalid rec
     local invalid = codec.encode({ { file = file, line = 1, snapshot = value } })
     no(codec.decode(invalid))
   end
-  local v2 = codec.encode({ marks[1] }); v2[1] = v2[1]:gsub('"mark_version":3', '"mark_version":2')
+  local v2 = codec.encode({ marks[1] }); v2[1] = v2[1]:gsub('"mark_version":%d', '"mark_version":2')
   eq(codec.decode(v2), { marks[1] })
 end)
 test('add captures unsaved source exactly and refresh is per-mark and undoable', function()
@@ -782,12 +782,12 @@ test('copy cancellation and stale name prompt do not copy another path', functio
   vim.ui.input = original; yes(ok, err)
 end)
 test('copy write failure leaves original and destination intact', function()
-  local r = capture(); local original = uv.fs_rename
-  uv.fs_rename = function() return nil, 'injected copy failure' end
+  local r = capture(); local original = uv.fs_link
+  uv.fs_link = function() return nil, 'injected copy failure' end
   local ok, err = pcall(function()
     no(s.copy('failed')); eq(state.active, r); no(store.load('failed')); eq(store.read(r.file), r.text)
   end)
-  uv.fs_rename = original; yes(ok, err)
+  uv.fs_link = original; yes(ok, err)
 end)
 test('import captures snapshots, retaining stale lines with warnings rather than exclusions', function()
   vim.cmd('enew'); vim.api.nvim_buf_set_lines(0, 0, -1, false, {

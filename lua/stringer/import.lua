@@ -1,6 +1,7 @@
 local parsers = require('stringer.import.parsers')
 local resolver = require('stringer.import.resolve')
 local source = require('stringer.source')
+local git = require('stringer.git')
 local M = {}
 
 local function fail(err)
@@ -25,11 +26,11 @@ function M.show_report()
 end
 
 function M.cancel()
-  if M.pending then M.pending.cancelled = true; M.pending = nil end
+  if M.pending then git.cancel(M.pending); M.pending = nil end
   return true
 end
 
-function M.start(name, commit)
+function M.start(name, commit, directory)
   M.cancel()
   local source_buf = vim.api.nvim_get_current_buf()
   local lines = vim.api.nvim_buf_get_lines(source_buf, 0, -1, false)
@@ -93,8 +94,15 @@ function M.start(name, commit)
             M.report[#M.report + 1] = '  ' .. vim.fn.strtrans(mark.frame)
           end
         end
-        if name then save(name)
-        else vim.ui.input({ prompt = 'Imported codepath name: ' }, save) end
+        git.enrich(result.marks, token, function(_, git_warnings)
+          if token.cancelled then return end
+          for _, warning in ipairs(git_warnings) do
+            M.report[#M.report + 1] = warning
+            vim.notify('Stringer: ' .. warning, vim.log.levels.WARN)
+          end
+          if name then save(name)
+          else vim.ui.input({ prompt = 'Imported codepath name in ' .. (directory or '') .. ': ' }, save) end
+        end)
       end, { force = true })
     end)
   end

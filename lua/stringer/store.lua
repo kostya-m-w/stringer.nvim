@@ -1,17 +1,16 @@
 local uv = vim.uv or vim.loop
 local codec = require('stringer.codec')
-local config = require('stringer.config')
+local directories = require('stringer.directories')
+local names = require('stringer.names')
 local M = {}
 
-function M.valid_name(name)
-  return type(name) == 'string' and name:match('^[A-Za-z0-9_-]+$') ~= nil
-end
+M.valid_name = names.valid
 
-function M.path(name)
+function M.path(name, directory)
   if not M.valid_name(name) then
-    return nil, 'Path names may contain only letters, numbers, hyphens, and underscores'
+    return nil, names.error
   end
-  return config.options.storage_dir .. '/' .. name .. '.stringer'
+  return (directory or directories.current()) .. '/' .. name .. '.stringer'
 end
 
 function M.read(file)
@@ -24,9 +23,9 @@ function M.read(file)
   return text, read_err
 end
 
-function M.list()
+function M.list(directory)
   local result = {}
-  local scan, err, code = uv.fs_scandir(config.options.storage_dir)
+  local scan, err, code = uv.fs_scandir(directory or directories.current())
   if not scan then
     if code == 'ENOENT' then
       return result
@@ -47,13 +46,19 @@ function M.list()
   return result
 end
 
-function M.load(name)
-  local file, err = M.path(name)
+function M.load(name, directory)
+  local file, err = M.path(name, directory)
   if not file then
     return nil, err
   end
-  local text
-  text, err = M.read(file)
+  return M.load_file(file)
+end
+
+function M.load_file(file)
+  file = vim.fs.normalize(vim.fn.fnamemodify(file, ':p'))
+  local name = vim.fs.basename(file):match('^(.*)%.stringer$')
+  if not names.valid(name) then return nil, names.error end
+  local text, err = M.read(file)
   if not text then
     return nil, 'Cannot read codepath: ' .. tostring(err)
   end
@@ -62,6 +67,20 @@ function M.load(name)
     return nil, codec.error_message(errors)
   end
   return { name = name, file = file, text = text, marks = marks }
+end
+
+local function same_file(a, b)
+  return a and b and a.dev == b.dev and a.ino == b.ino
+end
+
+local function publish(temp, file)
+  local ok, err, code = uv.fs_link(temp, file)
+  if ok then return true end
+  if code == 'EXDEV' or code == 'ENOTSUP' or code == 'EOPNOTSUPP' or code == 'EPERM' then
+    -- Exclusive copy is a non-clobber fallback for filesystems without links.
+    return uv.fs_copyfile(temp, file, { excl = true })
+  end
+  return nil, err
 end
 
 local function unchanged(file, expected)
@@ -111,22 +130,26 @@ function M.write(file, text, expected)
     end
     offset = offset + count
   end
-  ok, err = uv.fs_close(fd)
+  ok, err = uv.fs_fsync(fd)
+  local closed, close_err = uv.fs_close(fd)
+  if ok and not closed then ok, err = nil, close_err end
   if ok then
     ok, err = unchanged(file, expected)
   end
   if ok then
-    ok, err = uv.fs_rename(temp, file)
+    if expected == nil then ok, err = publish(temp, file)
+    else ok, err = uv.fs_rename(temp, file) end
   end
   if not ok then
     uv.fs_unlink(temp)
     return nil, 'Cannot save codepath: ' .. tostring(err)
   end
+  if expected == nil then uv.fs_unlink(temp) end
   return true
 end
 
-function M.create(name, marks)
-  local file, err = M.path(name)
+function M.create(name, marks, directory)
+  local file, err = M.path(name, directory)
   if not file then
     return nil, err
   end
@@ -143,11 +166,7 @@ function M.create(name, marks)
   return { name = name, file = file, text = text, marks = valid }
 end
 
-function M.rename(record, name)
-  if not M.valid_name(name) then
-    return nil, 'Path names may contain only letters, numbers, hyphens, and underscores'
-  end
-  local file = vim.fs.dirname(record.file) .. '/' .. name .. '.stringer'
+local function transfer(record, file)
   local ok, err = unchanged(record.file, record.text)
   if not ok then
     return nil, err
@@ -159,25 +178,48 @@ function M.rename(record, name)
   if not ok then
     return nil, err
   end
-  -- Both names are in the same directory. Linking reserves the new name
-  -- without replacing an existing destination, then removes the old name.
-  ok, err = uv.fs_link(record.file, file)
-  if not ok then
-    return nil, 'Cannot rename codepath: ' .. tostring(err)
+  local original = uv.fs_lstat(record.file)
+  if not original or original.type ~= 'file' then return nil, 'Move requires a regular codepath file' end
+  local code
+  ok, err, code = uv.fs_link(record.file, file)
+  if not ok and (code == 'EXDEV' or code == 'ENOTSUP' or code == 'EOPNOTSUPP' or code == 'EPERM') then
+    ok, err = M.write(file, record.text, nil)
   end
-  ok, err = uv.fs_unlink(record.file)
   if not ok then
-    local removed, cleanup_err = uv.fs_unlink(file)
-    return nil, 'Cannot remove old codepath name: ' .. tostring(err)
-      .. (removed and '' or '; could not remove new name: ' .. tostring(cleanup_err))
+    return nil, 'Cannot publish codepath destination: ' .. tostring(err)
+  end
+  local published = uv.fs_lstat(file)
+  ok, err = unchanged(record.file, record.text)
+  if ok and not same_file(original, uv.fs_lstat(record.file)) then ok, err = nil, 'Source file was replaced during move' end
+  if ok then ok, err = unchanged(file, record.text) end
+  if ok then ok, err = uv.fs_unlink(record.file) end
+  if not ok then
+    local removed, cleanup_err
+    if same_file(published, uv.fs_lstat(file)) and M.read(file) == record.text then
+      removed, cleanup_err = uv.fs_unlink(file)
+    else cleanup_err = 'Destination changed; retained for manual reconciliation' end
+    return nil, 'Move failed: ' .. tostring(err)
+      .. (removed and '' or ('; source retained at %s; destination remains at %s: %s'):format(record.file, file, tostring(cleanup_err)))
   end
   return file
 end
 
-function M.copy(record, name)
+function M.rename(record, name)
+  local file, err = M.path(name, vim.fs.dirname(record.file))
+  if not file then return nil, err end
+  return transfer(record, file)
+end
+
+function M.move(record, directory)
+  local destination, err = directories.resolve(directory, true)
+  if not destination then return nil, err end
+  return transfer(record, destination .. '/' .. vim.fs.basename(record.file))
+end
+
+function M.copy(record, name, directory)
   local ok, err = unchanged(record.file, record.text)
   if not ok then return nil, err end
-  return M.create(name, vim.deepcopy(record.marks))
+  return M.create(name, vim.deepcopy(record.marks), directory)
 end
 
 return M

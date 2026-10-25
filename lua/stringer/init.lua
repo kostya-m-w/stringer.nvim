@@ -6,6 +6,8 @@ local navigation = require('stringer.navigation')
 local pane = require('stringer.pane')
 local presentation = require('stringer.presentation')
 local fisheye = require('stringer.fisheye')
+local directories = require('stringer.directories')
+local capture = require('stringer.capture')
 local M = {}
 
 local function fail(err)
@@ -34,6 +36,7 @@ local function activate(record)
     return fail(err)
   end
   local previous = state.active
+  if previous ~= record then capture.cancel() end
   state.active = record
   if previous and previous.file ~= record.file then
     pane.highlight(previous)
@@ -45,15 +48,17 @@ end
 
 function M.setup(opts)
   config.setup(opts)
+  directories.setup(opts)
   fisheye.configure(opts)
   if opts and opts.pane_width ~= nil then pane.reset_widths() end
   M._initialize()
 end
 
-function M.new(name)
+function M.new(name, directory)
+  directory = directory or directories.current()
   if not name then
-    vim.ui.input({ prompt = 'New Stringer codepath: ' }, function(value)
-      if value and value ~= '' then M.new(value) end
+    vim.ui.input({ prompt = 'New codepath in ' .. directory .. ': ' }, function(value)
+      if value and value ~= '' then M.new(value, directory) end
     end)
     return true
   end
@@ -61,37 +66,43 @@ function M.new(name)
   if not ok then
     return fail(err)
   end
+  local file
+  file, err = store.path(name, directory)
+  if not file then return fail(err) end
+  ok, err = clean({ file = file })
+  if not ok then return fail(err) end
   local record
-  record, err = store.create(name)
+  record, err = store.create(name, nil, directory)
   if not record then
     return fail(err)
   end
   return activate(record)
 end
 
-function M.open(name)
+function M.open(name, directory)
+  directory = directory or directories.current()
   local ok, err = clean(state.active)
   if not ok then
     return fail(err)
   end
   if not name or name == '' then
     local names
-    names, err = store.list()
+    names, err = store.list(directory)
     if not names then
       return fail(err)
     end
     if #names == 0 then
-      return M.new()
+      return M.new(nil, directory)
     end
-    vim.ui.select(names, { prompt = 'Open Stringer codepath:' }, function(choice)
+    vim.ui.select(names, { prompt = 'Open codepath in ' .. directory .. ':' }, function(choice)
       if choice then
-        M.open(choice)
+        M.open(choice, directory)
       end
     end)
     return true
   end
   local record
-  record, err = store.load(name)
+  record, err = store.load(name, directory)
   if not record then
     return fail(err)
   end
@@ -102,6 +113,7 @@ function M.copy(name)
   local record, err = active()
   if not record then return fail(err) end
   local revision = record.revision or 0
+  local directory = directories.current()
   local function create(value)
     if not value or value == '' then return true end
     if state.active ~= record or (record.revision or 0) ~= revision then
@@ -110,18 +122,18 @@ function M.copy(name)
     local ok, problem = clean(record)
     if not ok then return fail(problem) end
     local file
-    file, problem = store.path(value)
+    file, problem = store.path(value, directory)
     if not file then return fail(problem) end
     ok, problem = clean({ file = file })
     if not ok then return fail(problem) end
     local copied
-    copied, problem = store.copy(record, value)
+    copied, problem = store.copy(record, value, directory)
     if not copied then return fail(problem) end
-    vim.notify('Stringer: copied ' .. record.name .. ' to ' .. value .. ' (original remains active)')
+    vim.notify('Stringer: copied to ' .. copied.file .. ' (original remains active)')
     return true
   end
   if name then return create(name) end
-  vim.ui.input({ prompt = 'Copy codepath to: ' }, create)
+  vim.ui.input({ prompt = 'Copy codepath into ' .. directory .. ' as: ' }, create)
   return true
 end
 
@@ -146,11 +158,60 @@ function M.add()
   if not mark then
     return fail(err)
   end
-  local marks = vim.deepcopy(record.marks)
-  marks[#marks + 1] = mark
-  ok, err = persist(record, marks, record.index)
-  if ok then M.sync() end
-  return ok, err
+  return capture.add(record, mark, function(success, problem)
+    if success then M.sync() else fail(problem) end
+  end)
+end
+
+function M.directory(path)
+  if not path then
+    vim.notify('Stringer directory: ' .. directories.current()
+      .. (state.active and ('\nActive file: ' .. state.active.file) or ''))
+    return true
+  end
+  local selected, err = directories.select(path)
+  if not selected then return fail(err) end
+  if state.active then pane.refresh(state.active) end
+  return true
+end
+
+function M.move(path)
+  local record, err = active()
+  if not record then return fail(err) end
+  local revision, original_file = record.revision or 0, record.file
+  local cwd = vim.fn.getcwd()
+  local function perform(value)
+    if not value or value == '' then return true end
+    if state.active ~= record or (record.revision or 0) ~= revision or record.file ~= original_file then
+      return fail('Codepath changed while choosing a move destination; retry')
+    end
+    if not require('stringer.codec').absolute(value) and value:sub(1, 1) ~= '~' then value = cwd .. '/' .. value end
+    local directory, problem = directories.resolve(value, true)
+    if not directory then return fail(problem) end
+    local destination = directory .. '/' .. vim.fs.basename(record.file)
+    local ok
+    ok, problem = clean(record)
+    if not ok then return fail(problem) end
+    ok, problem = clean({ file = destination })
+    if not ok then return fail(problem) end
+    local raw = vim.fn.bufnr(record.file)
+    local target = vim.fn.bufnr(destination)
+    if raw ~= -1 and target ~= -1 and raw ~= target then return fail('Close the destination storage buffer before moving') end
+    local file
+    file, problem = store.move(record, directory)
+    if not file then return fail(problem) end
+    local old = record.file
+    record.file = file
+    directories.selected = directory
+    pane.rekey(record, old)
+    if raw ~= -1 and vim.api.nvim_buf_is_valid(raw) and old ~= file then vim.api.nvim_buf_set_name(raw, file) end
+    presentation.refresh(record)
+    vim.notify('Stringer: moved codepath to ' .. file)
+    return true
+  end
+  if path then return perform(path) end
+  vim.ui.input({ prompt = 'Move codepath to directory: ', default = directories.current() }, perform)
+  return true
 end
 
 function M.sync()
@@ -278,19 +339,20 @@ function M.note(index)
 end
 
 function M.import(name)
+  local directory = directories.current()
   return require('stringer.import').start(name, function(value, marks)
     local ok, err = clean(state.active)
     if not ok then return fail(err) end
     local file
-    file, err = store.path(value)
+    file, err = store.path(value, directory)
     if not file then return fail(err) end
     ok, err = clean({ file = file })
     if not ok then return fail(err) end
     local record
-    record, err = store.create(value, marks)
+    record, err = store.create(value, marks, directory)
     if not record then return fail(err) end
     return activate(record)
-  end)
+  end, directory)
 end
 
 function M.import_report() return require('stringer.import').show_report() end
@@ -311,7 +373,13 @@ end
 function M.reload()
   local record, err = active()
   if not record then return fail(err) end
-  return M.open(record.name)
+  local ok
+  ok, err = clean(record)
+  if not ok then return fail(err) end
+  local fresh
+  fresh, err = store.load_file(record.file)
+  if not fresh then return fail(err) end
+  return activate(fresh)
 end
 
 function M.rename(name)

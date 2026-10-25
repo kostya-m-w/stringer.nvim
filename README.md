@@ -3,7 +3,8 @@
 Capture ordered codepaths and navigate them in Neovim. A codepath can span
 multiple repositories and contain multiple locations in the same file.
 
-Version **0.7** requires **Neovim 0.10+**. Pure Lua, with no dependencies.
+Version **0.8** requires **Neovim 0.10+**. Pure Lua, with no plugin dependencies.
+Git provenance is optional and uses the `git` executable when available.
 
 ## Installation
 
@@ -80,6 +81,8 @@ require('stringer').setup({
 | `:Stringer open [name]` | Activate a path, or select one with `vim.ui.select`. |
 | `:Stringer rename [name]` | Rename the active path; prompt when name is omitted. |
 | `:Stringer copy [name]` | Copy the active path under a new name, remaining on the original. |
+| `:Stringer directory [path]` | Select/create a storage directory, or report current storage locations. |
+| `:Stringer move [directory]` | Move the active codepath to a directory, keeping its name and active state. |
 | `:Stringer add` | Append the current file and line. |
 | `:Stringer show` | Open/focus the mark pane. |
 | `:Stringer next` / `prev` | Jump to the next/previous mark, wrapping at either end. |
@@ -103,8 +106,22 @@ require('stringer').setup({
 In the pane, the selected mark is the row under its cursor. From code, actions
 use the active mark. Moving marks does not wrap at the ends; navigation does.
 
-Names accept letters, numbers, hyphens, and underscores. Existing names are never
-overwritten by creation or renaming. Only one path is active. Opening a path does
+Names accept spaces, Unicode, and ordinary filesystem-compatible punctuation.
+Quote multiword names with either single or double quotes in commands:
+
+```vim
+:Stringer new "Investigate payment retry failures"
+:Stringer rename 'Payment retries after gateway timeout'
+:Stringer copy "Alternative retry flow"
+```
+
+Prompts take literal text without surrounding quotes. Existing unquoted
+single-token names still work. Inside quotes, escape the matching quote or a
+backslash with `\`; other backslashes remain literal. Arguments are never sent
+through a shell. Empty names, surrounding whitespace, separators (`/` or `\`),
+and control characters are rejected; unsupported host filenames report errors.
+
+Existing names are never overwritten by creation or renaming. Only one path is active. Opening a path does
 not jump automatically. If `open` finds no saved paths, it prompts for a new name;
 cancelling the prompt creates nothing.
 
@@ -156,7 +173,9 @@ The pane is a noneditable view, separate from the persisted file format:
 | `q` | Close the pane; keep the codepath active. |
 
 The selected codepath's name stays visible in a styled window header (`winbar`),
-even when the list is scrolled. Counts and key hints have separate styles.
+even when the list is scrolled. The metadata row shows its storage directory and,
+when different, the directory currently selected for browsing. Press `?` for the
+command/key reference, or use `:Stringer directory` to see full file locations.
 
 Every mark starts with a downward `↓` arrow on its first row, followed by its
 number, statuses, and captured source text. Its second row shows a location ending
@@ -217,6 +236,7 @@ background. Highlight groups follow the colorscheme and can be customized:
 | `StringerMissing`, `StringerUnreadable` | Error states, linked to `DiagnosticError` |
 | `StringerUncaptured` | Informational state, linked to `DiagnosticInfo` |
 | `StringerChecking`, `StringerHelp` | Quiet pending state and key hints, linked to `Comment` |
+| `StringerStorage`, `StringerBrowse` | Active storage location and a different browsing directory |
 | `StringerNoteBadge`, `StringerNote` | Note indicator and note body |
 | `StringerActive`, `StringerSkipped` | Active background and skipped content |
 
@@ -373,6 +393,78 @@ points, not by continuous filesystem watching.
 indicate code movement or an indentation-only edit. Navigation still uses the
 stored file and line. Preview refreshes never write snapshots or undo history.
 
+## Git creation provenance
+
+New marks record the full `HEAD` commit ID and repository-relative source path
+when Git can resolve the marked file's repository. Different marks in one
+codepath can belong to different repositories. Worktrees, nested repositories,
+and detached HEAD are supported. Both full SHA-1 and SHA-256 IDs are accepted.
+
+This records the checkout observed during creation, **not a claim that the saved
+source text matches that commit**. Uncommitted/unsaved changes remain represented
+by the source snapshot; an untracked file may not exist in the recorded commit.
+Imports use the local checkout at import time, not a historical revision inferred
+from a trace.
+
+Refreshing a snapshot preserves the original Git provenance. Copying, moving,
+renaming, notes, skipping, reordering, and undo also preserve it. Existing marks
+are never backfilled with a guessed creation commit.
+
+Marking still works outside Git, without the executable, or with unborn HEAD.
+Other lookup errors/timeouts omit provenance and notify you. Git lookups are
+asynchronous and bounded; rapid adds preserve invocation order and capture the
+original cursor/text before waiting. Switching/reloading the active path cancels
+its pending adds; changing only the browsing directory does not retarget them.
+Import batches lookups by repository and preserves cancellation behavior.
+
+## Ticket-specific storage directories
+
+`storage_dir` sets the startup default. Select a ticket directory at runtime:
+
+```vim
+:Stringer directory "~/investigations/TICKET-123"
+:Stringer new "Investigate payment retry failures"
+:Stringer directory "~/investigations/TICKET-456"
+```
+
+Selection is session-wide, creates missing directories, expands leading `~/`,
+and resolves relative directories against cwd without changing cwd. Existing
+directory aliases are canonicalized. Unrelated `setup` calls retain the selected
+directory; explicitly setting `storage_dir` changes it.
+
+New, named open, import, and copy destinations use the selected directory; the
+picker lists only that directory. Already-open paths remain bound to their actual
+file. **Save, reload, rename, undo, notes, and snapshots do not follow a later
+directory switch.** Same-named paths in different directories remain independent.
+
+Prompts/imports capture their destination directory when started. Changing the
+selection while a prompt or import is pending does not silently retarget it.
+`:Stringer directory` without arguments reports both the browsing directory and
+the active file's full location.
+
+### Move the active codepath
+
+```vim
+:Stringer move "~/investigations/TICKET-456"
+```
+
+Omit the directory to prompt. A successful move keeps the name, original file
+bytes, active record, mark order, metadata, undo history, fish-eye state, and note
+drafts. It selects the destination directory for subsequent browsing. A move to
+the same canonical directory is a no-op; moving does not upgrade the format.
+
+Occupied destinations, dirty raw storage buffers, stale prompts, and externally
+changed source files are rejected. Same-filesystem links and staged cross-device
+copies publish without overwriting another file. The original is removed only
+after the destination is complete and verified. If removal fails, rollback is
+attempted without deleting a destination changed by another writer. If rollback
+also fails, both locations are reported and the original remains active.
+
+Cross-filesystem moves are not atomic: interruption can leave a duplicate, but
+the source is not removed before a complete destination exists. These checks do
+not constitute multi-process locking. If both source and destination raw buffers
+are open, close the destination buffer before moving.
+
 ## Copy a codepath
 
 ```vim
@@ -475,7 +567,8 @@ formats and source-map reconstruction are outside this initial coverage.
 
 ## Persistence and recovery
 
-Append, remove, move, skip, and undo save immediately; notes save on `:write`.
+Append, remove, reorder, skip, and undo save when the operation completes;
+Git-backed adds may finish asynchronously. Notes save on `:write`.
 The in-memory marks and pane
 update only after the write succeeds. Moves preserve the active entry even when
 its index changes; removing the active entry clears it until proximity detection
@@ -493,17 +586,15 @@ discarded first. External-edit checks are content-based, not multi-process locks
 
 ## Storage format and compatibility
 
-Versions 0.6 and 0.7 use the same storage format as 0.5; view settings are
-presentation-only changes.
-
-Existing paths from 0.1–0.4 load without rewriting or silently capturing text.
-New paths and successful mutations use mark format v3. Untouched old marks keep
-their snapshots absent. Each `<name>.stringer` file contains a JSON Lines header
+Existing paths from 0.1–0.7 load without rewriting or guessing historical Git
+provenance. Moving/renaming preserves original bytes. New paths and successful
+content mutations use mark format v4. Untouched old marks retain absent metadata.
+Each `<name>.stringer` file contains a JSON Lines header
 and one mark per physical line:
 
 ```json
-{"type":"stringer","format_version":1,"mark_version":3}
-{"file":"/workspace/service/src/main.lua","line":42,"snapshot":"  handle(request)"}
+{"type":"stringer","format_version":1,"mark_version":4}
+{"file":"/workspace/service/src/main.lua","line":42,"snapshot":"  handle(request)","git":{"commit":"0123456789abcdef0123456789abcdef01234567","path":"src/main.lua"}}
 {"file":"/workspace/library/src/client.lua","line":108,"skipped":true,"note":"First line\nSecond line","frame":"original imported frame"}
 ```
 
@@ -515,8 +606,9 @@ paths, and unsupported versions are rejected. A normal final newline is valid.
 Optional fields are boolean `skipped` and string `note`/`frame`/`snapshot`; absent
 skipped means false. Notes and frame strings are JSON-escaped. Snapshots contain
 one logical source line without its terminator. An absent snapshot means
-uncaptured; `"snapshot":""` captures an empty line. Older Stringer releases
-reject mark format v3, so upgraded paths require Stringer 0.5+.
+uncaptured; `"snapshot":""` captures an empty line. Optional `git` metadata requires
+both a full commit ID and a non-traversing repository-relative `path`. Older
+Stringer releases reject mark format v4, so upgraded paths require Stringer 0.8+.
 
 Unlike 0.1, the pane is no longer raw JSON: editing text and `:write` have been
 replaced by explicit, immediately persisted mark actions.
@@ -527,6 +619,7 @@ replaced by explicit, immediately persisted mark actions.
 
 - `setup(opts)`
 - `new(name?)`, `open(name?)`, `rename(name?)`, `copy(name?)`, `reload()`
+- `directory(path?)`, `move(directory?)`
 - `add()`, `show()`, `next()`, `prev()`, `jump(index)`
 - `remove(index?)`, `move_up(index?)`, `move_down(index?)`, `undo()`
 - `skip(index?)`, `hide_skipped()`, `note(index?)`
@@ -539,7 +632,7 @@ Indices refer to the full stored mark list, including hidden entries, and are
 one-based. Omitted action indices use pane selection or the active
 mark. Operations return `true` or `nil, error` and notify on failure. Prompting
 operations return after launching an asynchronous prompt; cancelling is harmless.
-Import and disk-backed snapshot refresh return before asynchronous work finishes;
+Git-backed add, import, and disk-backed snapshot refresh may return before asynchronous work finishes;
 errors are notified, and import details appear in its report. `setup` raises
 an error for invalid options.
 
@@ -563,9 +656,13 @@ nvim --headless -u NONE -l tests/run.lua
 nvim --headless -u NONE -l tests/ui.lua
 nvim --headless -u NONE -l tests/fisheye.lua
 nvim --headless -u NONE -l tests/fisheye_ui.lua
+nvim --headless -u NONE -l tests/storage_git.lua
 ```
 
 The regression suite covers persistence, proximity selection, cyclic navigation,
 mark mutations, rename, conflicts, path presentation, and reopening in a fresh
 process. The UI suite drives real keyboard input in an embedded Neovim with an
 attached screen. In-editor reference: `:help stringer`.
+
+The storage/Git suite uses disposable repositories with per-command fixture
+identity settings; it does not change your Git configuration or project history.

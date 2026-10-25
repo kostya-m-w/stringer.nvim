@@ -1,6 +1,7 @@
 *stringer.txt*  Ordered codepaths for Neovim                         *stringer*
 
-Stringer 0.7 requires Neovim 0.10 or newer. No dependencies.
+Stringer 0.8 requires Neovim 0.10 or newer. No plugin dependencies.
+Git provenance uses the optional git executable.
 
 ==============================================================================
 QUICK START                                                 *stringer-start*
@@ -25,6 +26,10 @@ COMMANDS                                                 *:Stringer*
                         exist, prompt to create one. Cancelling is harmless.
 :Stringer rename [name]  Rename active codepath; prompt if no name supplied.
 :Stringer copy [name]    Copy to a new name, remaining on the original path.
+:Stringer directory [path]
+                        Select/create storage directory, or report locations.
+:Stringer move [directory]
+                        Move the active path, retaining its name and state.
 :Stringer add            Append current file and line; save immediately.
 :Stringer show           Open/focus the dedicated right-side pane.
 :Stringer next           Next mark, wrapping last to first.
@@ -50,9 +55,17 @@ COMMANDS                                                 *:Stringer*
 :Stringer fisheye-refresh
                         Retry targets, rebuild and recenter the view.
 
-Names use letters, numbers, hyphens, and underscores. Creating and renaming
-reject existing names. One codepath is active at a time. No global mappings
-are installed. Subcommands and saved path names have completion.
+Names support spaces, Unicode and filesystem-compatible punctuation. Quote
+multiword command arguments with either single or double quotes: >
+    :Stringer new "Investigate payment retry failures"
+    :Stringer rename 'Retry analysis'
+<
+Prompts take literal names without wrapping quotes. Old unquoted single-token
+names remain valid. Within quotes, escape a matching quote or backslash with a
+backslash; other backslashes stay literal. Empty names, surrounding whitespace,
+separators and control characters are rejected. Arguments are never shell code.
+Creation/rename reject existing destinations. Completion supports quoted names
+and directory arguments. One codepath is active; no global mappings are installed.
 
 From the pane, mark actions use its cursor row; from code, they use the active
 mark. Mark movement does not wrap, unlike navigation. Opening a path does not
@@ -92,7 +105,8 @@ Setup is optional: >lua
       fisheye_note_width = '35%',
     })
 <
-storage_dir             Independent cross-repository codepath storage.
+storage_dir             Startup storage directory; change runtime selection
+                        with :Stringer directory.
 pane_width              Percentage ('1%' to '99%'), or positive integer columns.
                         Default '40%'. Keep room for at least 40 code columns
                         where possible; Neovim may further constrain splits.
@@ -126,6 +140,7 @@ The pane is noneditable. Its local mappings are:
     H       Hide/reveal skipped marks.
     n       Edit a multiline note.
     c       Capture/refresh the selected mark's source snapshot and save.
+    ?       Open Stringer help.
     q       Close pane without deactivating the path.
 
 Each entry has two rows: a captured source line and a filename/line location.
@@ -136,8 +151,9 @@ shortened from the left so their endings and line numbers remain useful. Widths
 are measured in display cells. Shared pane buffers use the narrowest visible
 pane's available width. Persisted paths stay absolute.
 
-The selected codepath name appears in a styled persistent winbar. Counts and key
-hints use distinct styles. The name remains visible while the list is scrolled.
+The selected codepath name appears in a styled persistent winbar. The metadata
+row shows its actual storage directory and a different browsing directory when
+applicable. :Stringer directory shows full locations; ? opens help.
 
 Adaptive widths follow editor resizing. Manual widths are remembered per tab
 across close/reopen during the session, and clamped if the editor becomes too
@@ -185,6 +201,8 @@ StringerUnreadable      Read error; defaults to DiagnosticError.
 StringerUncaptured      Informational state; defaults to DiagnosticInfo.
 StringerChecking        Pending state; defaults to Comment.
 StringerHelp            Key hints; defaults to Comment.
+StringerStorage         Active storage location; defaults to Directory.
+StringerBrowse          Different browsing location; defaults to DiagnosticInfo.
 StringerNoteBadge       Note indicator; defaults to Special.
 StringerNote            Inline notes; defaults to Comment.
 StringerActive          Active-entry background, without a foreground override.
@@ -194,6 +212,57 @@ Defaults adapt to ColorScheme events and respect explicit user highlight
 definitions. Status foregrounds remain visible on active entries. These are
 structured UI colors, not language syntax highlighting. The pane's downward
 arrows are separate from source-gutter -> signs. Tree-sitter remains deferred.
+
+==============================================================================
+STORAGE DIRECTORIES AND MOVING                           *stringer-directory*
+                                                        *stringer-move*
+
+Use :Stringer directory [path] to select/create a ticket-specific storage
+directory. Leading ~/ is expanded; relative paths use the cwd captured when the
+operation starts. Cwd itself is not changed. Selection is session-wide and
+survives unrelated setup calls; explicitly setting storage_dir changes it.
+
+New, named open, import, copy destinations and the picker use the selected
+directory. Existing records keep their actual file identity: saves, reload,
+rename, undo, notes and snapshots never follow a later directory switch. Prompts
+and asynchronous imports bind their destination directory when they start.
+
+:Stringer directory without an argument reports the browsing directory and full
+active filename. Same-named paths in different directories are independent.
+
+:Stringer move [directory] keeps the filename, active record, bytes, history,
+metadata, note drafts and fish-eye state. It selects the destination on success;
+moving to the same canonical directory is a no-op. Missing directories are
+created, but failed moves leave the previous browsing selection intact.
+
+Collisions, raw storage-buffer drafts, stale prompts and external source-file
+changes block movement. Cross-filesystem movement stages and verifies a complete
+destination before removing the original. Publication never overwrites another
+file. Failed removal attempts rollback only if the destination still matches
+what this operation created; otherwise both retained locations are reported.
+Cross-filesystem moves are not atomic and can leave a duplicate after interruption.
+These content/identity checks are not multi-process locks. Close a destination
+raw storage buffer if both source and destination buffers are already open.
+
+==============================================================================
+GIT CREATION PROVENANCE                                  *stringer-git*
+
+New marks record full repository HEAD and repository-relative filename when
+available. Discovery starts from each marked file, not cwd. Worktrees, detached
+HEAD and nested repositories are supported. Imports use the checkout observed
+at import time, not a historical commit inferred from the trace.
+
+The commit does not represent unsaved/uncommitted changes or guarantee that an
+untracked file exists in it. Source snapshots still record actual captured text.
+Original Git metadata is immutable through snapshot refresh, note/skip edits,
+reorder, copy, move and rename. Old marks are not backfilled.
+
+Missing Git, no repository, or unborn HEAD permit capture without provenance.
+Other lookup errors/timeouts notify and omit metadata. Git lookup is asynchronous
+and bounded. Rapid adds preserve invocation order and the original cursor/text;
+switching/reloading the active path cancels pending adds. A browsing-directory
+switch alone cannot retarget an active record. Imports batch lookups by repository
+and retain cancellation behavior.
 
 ==============================================================================
 FISH-EYE VIEW                                            *stringer-fisheye*
@@ -391,18 +460,20 @@ TypeScript source locations must already be present in the trace.
 ==============================================================================
 FORMAT AND COMPATIBILITY                                  *stringer-format*
 
-Versions 0.6 and 0.7 use the same storage format as 0.5; view changes do not change
-stored snapshots, notes, or navigation order.
+Moving/renaming preserves original file bytes and format. View changes never
+alter saved metadata or history.
 
-Versions 0.1-0.4 load without rewriting or silently capturing historical text.
-New paths and the next successful mutation use mark version 3. Untouched old
-marks retain absent snapshots. Storage remains JSON Lines: >
-    {"type":"stringer","format_version":1,"mark_version":3}
+Versions 0.1-0.7 load without rewriting or guessing historical provenance.
+New paths and the next successful content mutation use mark version 4. Untouched
+old marks retain absent metadata. Storage remains JSON Lines: >
+    {"type":"stringer","format_version":1,"mark_version":4}
     {"file":"/workspace/service/main.lua","line":42,"snapshot":"  handle()"}
 <
 Optional fields: boolean skipped, string note, string frame (import context),
-and single-line string snapshot. Absent snapshot means uncaptured; snapshot=""
-captures a blank line. Older plugin versions reject mark version 3.
+and single-line string snapshot. Optional git metadata contains both commit (a
+full 40/64-character hexadecimal object ID) and path (a repository-relative source
+filename without traversal). Absent snapshot means uncaptured; snapshot=""
+captures a blank line. Older plugin versions reject mark version 4.
 Missing skipped means false. Multiline strings are escaped in JSON, preserving
 one physical line per mark. Rendering/comparison never mutates stored marks.
 Format versions are independent of plugin releases. Marks require absolute
@@ -426,6 +497,7 @@ LUA API                                                  *stringer-api*
 require('stringer') exposes:
     setup(opts)
     new(name?), open(name?), rename(name?), copy(name?), reload()
+    directory(path?), move(directory?)
     add(), show(), next(), prev(), jump(index)
     remove(index?), move_up(index?), move_down(index?), undo()
     skip(index?), hide_skipped(), note(index?)
@@ -438,7 +510,7 @@ Indices address the full stored list, including hidden marks, and are one-based.
 Omitted action indices use the selected/active mark.
 Operations return true or nil, error and notify failures. Prompting functions
 return before the asynchronous selection completes. setup errors on invalid
-options. Import and disk-backed snapshot refresh can return before asynchronous
+options. Git-backed add, import and disk-backed snapshot refresh can return before asynchronous
 completion. Errors are notified; import details are available in its report.
 
  vim:tw=78:ts=8:noet:ft=help:norl:

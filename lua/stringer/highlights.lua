@@ -27,6 +27,7 @@ function M.setup()
     StringerNote = 'Comment', StringerNoteBadge = 'Special', StringerChanged = 'DiagnosticWarn',
     StringerMissing = 'DiagnosticError', StringerUnreadable = 'DiagnosticError',
     StringerUncaptured = 'DiagnosticInfo', StringerChecking = 'Comment',
+    StringerStorage = 'Directory', StringerBrowse = 'DiagnosticInfo',
   }
   for name, target in pairs(links) do set(name, { link = target }) end
   set('StringerGutter', { fg = '#e5c07b', ctermfg = 3 })

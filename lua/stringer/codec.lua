@@ -17,6 +17,15 @@ local function keys_match(value, keys)
   return true
 end
 
+local function valid_git(value)
+  if not keys_match(value, { commit = true, path = true }) then return false end
+  if not require('stringer.git').valid_commit(value.commit) or type(value.path) ~= 'string'
+    or value.path == '' or M.absolute(value.path) or value.path:find('[\\%c]')
+    or value.path:sub(-1) == '/' or value.path:find('//', 1, true) then return false end
+  for part in value.path:gmatch('[^/]+') do if part == '..' or part == '.' then return false end end
+  return true
+end
+
 function M.decode(lines)
   local marks, errors = {}, {}
   local version
@@ -34,12 +43,14 @@ function M.decode(lines)
       if not keys_match(value, { type = true, format_version = true, mark_version = true })
         or value.type ~= 'stringer' then
         problem(i, 'Expected a Stringer header')
-      elseif value.format_version ~= 1 or (value.mark_version ~= 1 and value.mark_version ~= 2 and value.mark_version ~= 3) then
-        problem(i, 'Unsupported version; expected format_version=1 and mark_version=1, 2 or 3')
+      elseif value.format_version ~= 1 or not vim.tbl_contains({ 1, 2, 3, 4 }, value.mark_version) then
+        problem(i, 'Unsupported version; expected format_version=1 and mark_version=1, 2, 3 or 4')
       else
         version = value.mark_version
       end
-    elseif not keys_match(value, version == 3
+    elseif not keys_match(value, version == 4
+      and { file = true, line = true, skipped = true, note = true, frame = true, snapshot = true, git = true }
+      or version == 3
       and { file = true, line = true, skipped = true, note = true, frame = true, snapshot = true }
       or version == 2
       and { file = true, line = true, skipped = true, note = true, frame = true }
@@ -50,7 +61,8 @@ function M.decode(lines)
       or (value.skipped ~= nil and type(value.skipped) ~= 'boolean')
       or (value.note ~= nil and type(value.note) ~= 'string')
       or (value.frame ~= nil and type(value.frame) ~= 'string')
-      or (value.snapshot ~= nil and (type(value.snapshot) ~= 'string' or value.snapshot:find('[\r\n]'))) then
+      or (value.snapshot ~= nil and (type(value.snapshot) ~= 'string' or value.snapshot:find('[\r\n]')))
+      or (value.git ~= nil and not valid_git(value.git)) then
       problem(i, 'Expected an absolute file path and a positive integer line number')
     else
       local mark = { file = vim.fs.normalize(value.file), line = value.line }
@@ -58,6 +70,7 @@ function M.decode(lines)
       if value.note and value.note ~= '' then mark.note = value.note end
       if value.frame and value.frame ~= '' then mark.frame = value.frame end
       if value.snapshot ~= nil then mark.snapshot = value.snapshot end
+      if value.git ~= nil then mark.git = { commit = value.git.commit:lower(), path = value.git.path } end
       marks[#marks + 1] = mark
     end
   end
@@ -68,7 +81,7 @@ function M.decode(lines)
 end
 
 function M.encode(marks)
-  local lines = { '{"type":"stringer","format_version":1,"mark_version":3}' }
+  local lines = { '{"type":"stringer","format_version":1,"mark_version":4}' }
   for _, mark in ipairs(marks) do
     local text = '{"file":' .. vim.json.encode(mark.file) .. ',"line":' .. tostring(mark.line)
     if mark.skipped then text = text .. ',"skipped":true' end
@@ -78,6 +91,7 @@ function M.encode(marks)
       end
     end
     if mark.snapshot ~= nil then text = text .. ',"snapshot":' .. vim.json.encode(mark.snapshot) end
+    if mark.git ~= nil then text = text .. ',"git":' .. vim.json.encode(mark.git) end
     lines[#lines + 1] = text .. '}'
   end
   return lines

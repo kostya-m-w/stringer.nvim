@@ -65,7 +65,7 @@ function M.suffixes(marks)
   return result
 end
 
-function M.build(record, width, preview, inline_notes)
+function M.build(record, width, preview, inline_notes, storage)
   width = math.max(1, width)
   local skipped = 0
   for _, mark in ipairs(record.marks) do if mark.skipped then skipped = skipped + 1 end end
@@ -78,6 +78,20 @@ function M.build(record, width, preview, inline_notes)
     lines = { header, '<CR> jump  c capture  n note  s skip  H hide  K/J move  dd remove  u undo  q close' },
     row_to_index = {}, index_to_row = {}, ranges = {}, spans = {},
   }
+  if storage then
+    local function display(path)
+      local home = vim.fn.expand('~')
+      if path:sub(1, #home + 1) == home .. '/' then path = '~' .. path:sub(#home + 1) end
+      return vim.fn.strtrans(path)
+    end
+    if storage.stored == storage.browse then
+      view.lines[2] = 'Stored: ' .. M.fit(display(storage.stored), math.max(1, width - 8), true)
+    else
+      local available = math.max(1, math.floor((width - 15) / 2))
+      view.lines[2] = 'In: ' .. M.fit(display(storage.stored), available, true)
+        .. ' | Browse: ' .. M.fit(display(storage.browse), available, true)
+    end
+  end
   local function span(row, first, last, group)
     if last > first then
       view.spans[#view.spans + 1] = { row = row, first = first, last = last, group = group }
@@ -90,7 +104,9 @@ function M.build(record, width, preview, inline_notes)
   end
   local hidden_at = header:find('[active hidden]', 1, true)
   if hidden_at then span(1, hidden_at - 1, #header, 'StringerUncaptured') end
-  span(2, 0, #view.lines[2], 'StringerHelp')
+  span(2, 0, #view.lines[2], storage and 'StringerStorage' or 'StringerHelp')
+  local browse_at = storage and view.lines[2]:find('Browse:', 1, true)
+  if browse_at then span(2, browse_at - 1, #view.lines[2], 'StringerBrowse') end
   local suffixes = M.suffixes(record.marks)
   local function add(index, line)
     view.lines[#view.lines + 1] = line

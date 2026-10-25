@@ -148,7 +148,8 @@ function M.refresh(record, selected)
       view = saved, top_index = top_index, top_offset = top_range and saved.topline - top_range.first or 0 }
     header(record, win)
   end
-  local view = layout.build(record, M.width(record), source.preview, config.options.inline_notes and state.active == record)
+  local view = layout.build(record, M.width(record), source.preview, config.options.inline_notes and state.active == record,
+    { stored = vim.fs.dirname(record.file), browse = require('stringer.directories').current() })
   local lines = view.lines
   record.row_to_index, record.index_to_row, record.ranges = view.row_to_index, view.index_to_row, view.ranges
   record.spans = view.spans
@@ -252,6 +253,7 @@ local function prepare(record)
       vim.notify('Stringer: ' .. tostring(err), vim.log.levels.ERROR)
     end
   end, { buffer = buf, silent = true, desc = 'Close Stringer pane' })
+  vim.keymap.set('n', '?', '<cmd>help stringer<CR>', { buffer = buf, silent = true, desc = 'Stringer help' })
   M.refresh(record)
   return buf
 end

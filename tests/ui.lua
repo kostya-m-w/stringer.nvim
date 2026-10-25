@@ -251,6 +251,28 @@ local ok, err = xpcall(function()
     end
     return text:find('long-view', 1, true) ~= nil
   ]]), 'Codepath name disappeared when the list was scrolled')
+
+  lua('assert(require("stringer").directory((...) .. "/Ticket A"))', root)
+  input(':Stringer new "Investigate payment retries"<CR>')
+  assert(lua('return require("stringer.state").active.name') == 'Investigate payment retries')
+  input(':Stringer new "Another analysis"<CR>')
+  input(':Stringer open Inv<Tab><CR>')
+  assert(lua('return require("stringer.state").active.name') == 'Investigate payment retries', 'Quoted name completion failed')
+  input(':Stringer open "Investigate pay<Tab><CR>')
+  assert(lua('return require("stringer.state").active.name') == 'Investigate payment retries', 'Completion inside quotes failed')
+  input(":Stringer rename 'Payment failure analysis'<CR>")
+  input(':Stringer copy "Alternative flow"<CR>')
+  assert(lua('return require("stringer.state").active.name') == 'Payment failure analysis')
+  lua('assert(require("stringer").directory((...) .. "/Ticket B")); assert(require("stringer").show())', root)
+  assert(lua([[
+    local r = require('stringer.state').active
+    local p = require('stringer.pane')
+    return vim.api.nvim_buf_get_lines(p.buffer(r), 1, 2, false)[1]:find('Browse:', 1, true) ~= nil
+  ]]), 'Different browsing directory is not indicated')
+  input(':Stringer move "' .. root .. '/Ticket C"<CR>')
+  assert(lua('return require("stringer.state").active.file') == root .. '/Ticket C/Payment failure analysis.stringer',
+    'Quoted move destination failed')
+  assert(lua('return require("stringer.directories").current()') == root .. '/Ticket C')
 end, debug.traceback)
 
 vim.fn.jobstop(child)
@@ -259,5 +281,5 @@ if not ok then
   print(err)
   vim.cmd('cquit 1')
 end
-print('UI PASS: adaptive pane, persistent header, downward arrows, status colors, preserved viewport, mark actions and notes')
+print('UI PASS: pane rendering, viewport, mark actions, quoted names/completion, storage context and path movement')
 vim.cmd('qa!')
