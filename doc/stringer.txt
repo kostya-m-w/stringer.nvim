@@ -1,6 +1,6 @@
 *stringer.txt*  Ordered codepaths for Neovim                         *stringer*
 
-Stringer 0.8 requires Neovim 0.10 or newer. No plugin dependencies.
+Stringer 0.9 requires Neovim 0.10 or newer. No plugin dependencies.
 Git provenance uses the optional git executable.
 
 ==============================================================================
@@ -99,6 +99,7 @@ Setup is optional: >lua
       gutter_sign = '->',
       gutter_priority = 10,
       inline_notes = true,
+      footer = true,
       fisheye_previous = 2,
       fisheye_next = 2,
       fisheye_notes = true,
@@ -115,6 +116,7 @@ gutter_sign             Shared mark sign; one or two display cells.
 gutter_note_sign        Deprecated no-op, accepted for old configurations.
 gutter_priority         Nonnegative sign priority; default 10.
 inline_notes            Automatically expand notes below the active entry.
+footer                  Show the compact, always-visible key/action footer.
 fisheye_previous        Requested previous marks; nonnegative integer.
 fisheye_next            Requested next marks; nonnegative integer.
 fisheye_notes           Initial session-global fish-eye notes visibility.
@@ -184,6 +186,27 @@ last valid runtime state. Save/discard drafts in manually opened raw storage
 buffers first. Content comparison is not a multi-process locking protocol.
 
 ==============================================================================
+KEY/ACTION FOOTER                                        *stringer-footer*
+
+A compact footer remains at the bottom while the list scrolls and while focus
+is in code. It also works in the fish-eye path pane. Example: >
+    Enter jump · n note · c capture · s skip · ? help
+<
+Hints adapt to the window width, retaining ? for the complete reference. Wider
+footers show H hide skipped or H show skipped according to the filter state.
+Use the same keys in the pane; the footer itself is informational chrome, not
+an editable or selectable mark row.
+
+Visible per-window statuslines carry the hints natively. If laststatus selects
+a global or hidden statusline, a non-focusable footer occupies the bottom of the
+pane instead, with padding so final mark/note rows remain reachable. Global
+statusline options are never changed. Leaving the pane restores its previous
+local statusline. Set footer=false to disable the hints.
+
+? opens this full reference, including dd remove, K/J move, u undo, r rename,
+R reload, H hide/reveal skipped marks, and q close.
+
+==============================================================================
 PANE HIGHLIGHTS                                          *stringer-highlights*
 
 StringerHeader          Persistent header background.
@@ -203,6 +226,8 @@ StringerChecking        Pending state; defaults to Comment.
 StringerHelp            Key hints; defaults to Comment.
 StringerStorage         Active storage location; defaults to Directory.
 StringerBrowse          Different browsing location; defaults to DiagnosticInfo.
+StringerFooter          Hint footer background and action descriptions.
+StringerFooterKey       Emphasized keys within the footer.
 StringerNoteBadge       Note indicator; defaults to Special.
 StringerNote            Inline notes; defaults to Comment.
 StringerActive          Active-entry background, without a foreground override.
@@ -459,6 +484,9 @@ TypeScript source locations must already be present in the trace.
 
 ==============================================================================
 FORMAT AND COMPATIBILITY                                  *stringer-format*
+
+Versions 0.8 and 0.9 share mark format v4. Footer rendering does not modify
+codepaths, mark selection, notes or undo history.
 
 Moving/renaming preserves original file bytes and format. View changes never
 alter saved metadata or history.

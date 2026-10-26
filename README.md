@@ -3,7 +3,7 @@
 Capture ordered codepaths and navigate them in Neovim. A codepath can span
 multiple repositories and contain multiple locations in the same file.
 
-Version **0.8** requires **Neovim 0.10+**. Pure Lua, with no plugin dependencies.
+Version **0.9** requires **Neovim 0.10+**. Pure Lua, with no plugin dependencies.
 Git provenance is optional and uses the `git` executable when available.
 
 ## Installation
@@ -55,6 +55,7 @@ require('stringer').setup({
   gutter_sign = '->',
   gutter_priority = 10,
   inline_notes = true,
+  footer = true,
   fisheye_previous = 2,
   fisheye_next = 2,
   fisheye_notes = true,
@@ -177,6 +178,25 @@ even when the list is scrolled. The metadata row shows its storage directory and
 when different, the directory currently selected for browsing. Press `?` for the
 command/key reference, or use `:Stringer directory` to see full file locations.
 
+A compact key/action footer stays at the bottom of the pane while the list
+scrolls, including when focus is in code or fish-eye mode. For example:
+
+```text
+Enter jump · n note · c capture · s skip · ? help
+```
+
+Hints adapt to each window's width, retaining `?` for the full reference even in
+very narrow panes. Wider footers also show the `H` action as `hide skipped` or
+`show skipped`, matching its current state. Keys and action descriptions have
+separate `StringerFooterKey` and `StringerFooter` styles.
+
+The footer uses the pane's local statusline when visible. With global or hidden
+statuslines, a non-focusable footer stays at the bottom of the pane instead;
+padding keeps the final mark/note accessible. Global statusline settings are
+never changed, and the original local statusline is restored when leaving the
+pane. The footer is informational, not a selectable mark. Set `footer = false`
+to disable it.
+
 Every mark starts with a downward `↓` arrow on its first row, followed by its
 number, statuses, and captured source text. Its second row shows a location ending
 in its filename and line number. Paths use the shortest trailing suffix that
@@ -237,6 +257,7 @@ background. Highlight groups follow the colorscheme and can be customized:
 | `StringerUncaptured` | Informational state, linked to `DiagnosticInfo` |
 | `StringerChecking`, `StringerHelp` | Quiet pending state and key hints, linked to `Comment` |
 | `StringerStorage`, `StringerBrowse` | Active storage location and a different browsing directory |
+| `StringerFooter`, `StringerFooterKey` | Compact hint footer background/actions and emphasized keys |
 | `StringerNoteBadge`, `StringerNote` | Note indicator and note body |
 | `StringerActive`, `StringerSkipped` | Active background and skipped content |
 
@@ -586,6 +607,8 @@ discarded first. External-edit checks are content-based, not multi-process locks
 
 ## Storage format and compatibility
 
+Version 0.9 uses the same storage format as 0.8; the footer adds no stored data.
+
 Existing paths from 0.1–0.7 load without rewriting or guessing historical Git
 provenance. Moving/renaming preserves original bytes. New paths and successful
 content mutations use mark format v4. Untouched old marks retain absent metadata.
@@ -657,6 +680,8 @@ nvim --headless -u NONE -l tests/ui.lua
 nvim --headless -u NONE -l tests/fisheye.lua
 nvim --headless -u NONE -l tests/fisheye_ui.lua
 nvim --headless -u NONE -l tests/storage_git.lua
+nvim --headless -u NONE -l tests/footer.lua
+nvim --headless -u NONE -l tests/footer_ui.lua
 ```
 
 The regression suite covers persistence, proximity selection, cyclic navigation,

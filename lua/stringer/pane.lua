@@ -2,6 +2,7 @@ local config = require('stringer.config')
 local state = require('stringer.state')
 local layout = require('stringer.layout')
 local source = require('stringer.source')
+local footer = require('stringer.footer')
 local M = {
   buffers = {},
   windows = {},
@@ -135,6 +136,7 @@ function M.refresh(record, selected)
   if not buf then
     return
   end
+  footer.prepare(buf)
   local previous_rows = record.row_to_index or {}
   local cursors = {}
   for _, win in ipairs(vim.fn.win_findbuf(buf)) do
@@ -151,6 +153,8 @@ function M.refresh(record, selected)
   local view = layout.build(record, M.width(record), source.preview, config.options.inline_notes and state.active == record,
     { stored = vim.fs.dirname(record.file), browse = require('stringer.directories').current() })
   local lines = view.lines
+  local last_line = #lines
+  if footer.needs_padding(buf) then lines[#lines + 1] = '' end
   record.row_to_index, record.index_to_row, record.ranges = view.row_to_index, view.index_to_row, view.ranges
   record.spans = view.spans
   if not vim.deep_equal(vim.api.nvim_buf_get_lines(buf, 0, -1, false), lines) then
@@ -178,7 +182,7 @@ function M.refresh(record, selected)
       row = math.min(row + cursor.offset, range.last)
     end
     local restored = cursor.view
-    restored.lnum = row or math.min(cursor.row, #lines)
+    restored.lnum = math.min(row or cursor.row, last_line)
     restored.col = math.min(restored.col, math.max(0, #lines[restored.lnum] - 1))
     local top = cursor.top_index and record.ranges[cursor.top_index]
     restored.topline = top and math.min(top.first + cursor.top_offset, top.last) or math.min(restored.topline, #lines)
@@ -187,6 +191,7 @@ function M.refresh(record, selected)
     vim.api.nvim_win_call(win, function() vim.fn.winrestview(restored) end)
   end
   M.highlight(record)
+  footer.refresh(record, buf, last_line)
 end
 
 function M.rekey(record, old_file)
@@ -212,11 +217,15 @@ local function prepare(record)
     group = group, buffer = buf, callback = function()
       local win = vim.api.nvim_get_current_win()
       if vim.api.nvim_win_get_buf(win) == buf then
+        footer.detach(win)
         M.remember_width(win)
         local size = M.sizes[win]
         if size then vim.wo[win].winbar = size.original_winbar end
       end
     end,
+  })
+  vim.api.nvim_create_autocmd({ 'CursorMoved', 'WinEnter' }, {
+    group = group, buffer = buf, callback = function() footer.ensure_cursor(vim.api.nvim_get_current_win()) end,
   })
   local mappings = {
     ['<CR>'] = { 'jump', 'Jump to mark' },

@@ -485,6 +485,7 @@ function M._initialize()
   vim.api.nvim_create_autocmd('ColorScheme', { group = group, callback = highlights })
   vim.api.nvim_create_autocmd({ 'WinEnter', 'BufEnter', 'CursorMoved', 'CursorMovedI' }, {
     group = group, callback = function()
+      require('stringer.footer').restore_inherited(vim.api.nvim_get_current_win())
       navigation.remember()
       M.sync()
     end,
@@ -502,6 +503,14 @@ function M._initialize()
   })
   vim.api.nvim_create_autocmd({ 'WinResized', 'VimResized', 'DirChanged' }, {
     group = group, callback = function() pane.resize(); presentation.queue_pane(state.active) end,
+  })
+  vim.api.nvim_create_autocmd('OptionSet', {
+    group = group, pattern = 'laststatus', callback = function() presentation.queue_pane(state.active) end,
+  })
+  vim.api.nvim_create_autocmd('WinClosed', {
+    group = group, callback = function()
+      vim.schedule(function() require('stringer.footer').sweep(); presentation.queue_pane(state.active) end)
+    end,
   })
   vim.api.nvim_create_autocmd({ 'BufWritePost', 'FileChangedShellPost' }, {
     group = group, callback = function(args) presentation.changed(args.buf) end,

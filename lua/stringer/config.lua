@@ -8,6 +8,7 @@ M.options = {
   gutter_note_sign = '->', -- Deprecated, accepted for existing configurations.
   gutter_priority = 10,
   inline_notes = true,
+  footer = true,
   symbol_labels = true, -- Deprecated: previews always show captured source.
   fisheye_previous = 2,
   fisheye_next = 2,
@@ -28,7 +29,7 @@ function M.setup(opts)
   assert((type(width) == 'number' and width >= 1 and width % 1 == 0)
     or (percent and percent > 0 and percent < 100),
     'Stringer: pane_width must be a positive integer or a percentage from 1% to 99%')
-  for _, key in ipairs({ 'gutter', 'inline_notes', 'symbol_labels' }) do
+  for _, key in ipairs({ 'gutter', 'inline_notes', 'symbol_labels', 'footer' }) do
     assert(type(options[key]) == 'boolean', 'Stringer: ' .. key .. ' must be a boolean')
   end
   for _, key in ipairs({ 'gutter_sign', 'gutter_note_sign' }) do

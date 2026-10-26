@@ -188,6 +188,7 @@ function M.render(view, targets, settings, options)
         vim.wo[row.note_win].number = false
         vim.wo[row.note_win].relativenumber = false
         vim.wo[row.note_win].signcolumn = 'no'
+        vim.wo[row.note_win].statusline = view.code_options.statusline
         vim.wo[row.note_win].winfixheight = true
         vim.wo[row.note_win].winbar = '%#StringerFishPreview# Notes · #' .. row.index
         roles[row.note_win] = { kind = 'notes', index = row.index, buf = row.note_buf }

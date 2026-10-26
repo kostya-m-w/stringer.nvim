@@ -166,7 +166,7 @@ function M.open()
   local origin_tab, origin_win = vim.api.nvim_get_current_tabpage(), vim.api.nvim_get_current_win()
   local code_win = require('stringer.navigation').window() or origin_win
   local code_options = {}
-  for _, key in ipairs({ 'number', 'relativenumber', 'wrap', 'cursorline', 'signcolumn' }) do code_options[key] = vim.wo[code_win][key] end
+  for _, key in ipairs({ 'number', 'relativenumber', 'wrap', 'cursorline', 'signcolumn', 'statusline' }) do code_options[key] = vim.wo[code_win][key] end
   local ok, err = guarded(function()
     vim.cmd('tabnew')
     local tab, main, seed = vim.api.nvim_get_current_tabpage(), vim.api.nvim_get_current_win(), vim.api.nvim_get_current_buf()
