@@ -338,6 +338,12 @@ function M.note(index)
   return true
 end
 
+function M.note_discard()
+  local ok, err = require('stringer.notes').discard()
+  if not ok then return fail(err) end
+  return true
+end
+
 function M.import(name)
   local directory = directories.current()
   return require('stringer.import').start(name, function(value, marks)

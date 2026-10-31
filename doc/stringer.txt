@@ -1,6 +1,6 @@
 *stringer.txt*  Ordered codepaths for Neovim                         *stringer*
 
-Stringer 0.9 requires Neovim 0.10 or newer. No plugin dependencies.
+Stringer 0.10 requires Neovim 0.10 or newer. No plugin dependencies.
 Git provenance uses the optional git executable.
 
 ==============================================================================
@@ -42,6 +42,7 @@ COMMANDS                                                 *:Stringer*
 :Stringer skip           Toggle skipped state and save.
 :Stringer hide-skipped   Toggle visibility of skipped marks (view only).
 :Stringer note           Edit selected mark's multiline note.
+:Stringer note-discard   Discard an open or hidden note draft explicitly.
 :Stringer refresh-snapshot
                         Capture/replace the selected mark's source snapshot.
 :Stringer import [name]  Import whole current buffer into a new codepath.
@@ -414,9 +415,11 @@ never deleted by filtering. A hidden active mark is indicated in the header.
 MULTILINE NOTES                                          *stringer-notes*
 
 Use n or :Stringer note for a Markdown editor. :write saves; :wq saves and closes
-only on success. Empty content removes the note. q closes a saved editor;
-:bwipeout! discards a draft explicitly. Opening another note will not replace
-an unsaved draft.
+only on success. Empty content removes the note. q closes the editor while
+keeping an unsaved draft. Reopen the same mark with n or :Stringer note to resume.
+Press D inside the editor, or :Stringer note-discard even after closing it, to
+discard the draft. Requesting a different note with an unsaved draft returns to
+that draft instead of replacing it.
 
 The active mark's full note expands directly beneath its location row, preserving
 blank lines and wrapping long lines. Another active mark replaces this section;
@@ -427,7 +430,7 @@ The separate note editor and its modified state are unaffected by reflow.
 
 Each save is an undoable mark mutation. If marks change while editing (including
 reordering, skipping, undo, or path reload), the editor refuses a stale save.
-Copy the draft, discard its editor, reopen the intended note, and paste it back.
+Copy the draft, press D to discard it, reopen the intended note, and paste it back.
 Navigation, view changes, and rename do not invalidate the draft. Failed saves
 preserve its modified flag and content.
 
@@ -529,6 +532,7 @@ require('stringer') exposes:
     add(), show(), next(), prev(), jump(index)
     remove(index?), move_up(index?), move_down(index?), undo()
     skip(index?), hide_skipped(), note(index?)
+    note_discard()
     refresh_snapshot(index?)
     import(name?), import_report(), cancel_import()
     fisheye(), fisheye_close(), fisheye_range(previous, next)

@@ -3,7 +3,7 @@
 Capture ordered codepaths and navigate them in Neovim. A codepath can span
 multiple repositories and contain multiple locations in the same file.
 
-Version **0.9** requires **Neovim 0.10+**. Pure Lua, with no plugin dependencies.
+Version **0.10** requires **Neovim 0.10+**. Pure Lua, with no plugin dependencies.
 Git provenance is optional and uses the `git` executable when available.
 
 ## Installation
@@ -94,6 +94,7 @@ require('stringer').setup({
 | `:Stringer skip` | Toggle skipping the selected mark during navigation. |
 | `:Stringer hide-skipped` | Hide/reveal skipped marks in the pane. |
 | `:Stringer note` | Edit the selected mark's multiline note. |
+| `:Stringer note-discard` | Discard an open or hidden note draft. |
 | `:Stringer refresh-snapshot` | Capture/replace the selected mark's saved source-line preview. |
 | `:Stringer import [name]` | Import the whole buffer's stacktrace into a new codepath. |
 | `:Stringer import-report` | Show the most recent import's results and excluded frames. |
@@ -527,13 +528,15 @@ not change the active mark. Hidden marks have no orphaned note section. Inline
 notes display Markdown source as read-only text with `StringerNote` highlighting
 (default `Comment`); set `inline_notes = false` to disable automatic expansion.
 
-The separate editor and its drafts are unaffected by automatic reflow. `q` closes a saved note; use
-`:bwipeout!` to explicitly discard a draft. Opening another note never replaces
-an unsaved draft.
+The separate editor and its drafts are unaffected by automatic reflow. `q` closes
+the editor while keeping an unsaved draft. Reopen the same mark with `n` or
+`:Stringer note` to resume editing. Press `D` inside the note editor, or run
+`:Stringer note-discard` even after closing it, to deliberately discard the draft.
+Requesting a different note with an unsaved draft returns you to that draft.
 
 A note save is one undoable mark change. If the mark list changes while the note
 is open (including reorder, skip, undo, or path reload), saving is rejected rather
-than applying the text to a possibly different mark. Copy the draft, discard its
+than applying the text to a possibly different mark. Copy the draft, press `D` to discard its
 editor, reopen the intended mark's note, and paste it there. Navigation, hiding,
 and renaming do not invalidate the editor. Failed saves keep the draft modified.
 
@@ -607,7 +610,7 @@ discarded first. External-edit checks are content-based, not multi-process locks
 
 ## Storage format and compatibility
 
-Version 0.9 uses the same storage format as 0.8; the footer adds no stored data.
+Version 0.10 uses the same storage format as 0.8; the footer and note-editor updates add no stored data.
 
 Existing paths from 0.1–0.7 load without rewriting or guessing historical Git
 provenance. Moving/renaming preserves original bytes. New paths and successful
@@ -646,6 +649,7 @@ replaced by explicit, immediately persisted mark actions.
 - `add()`, `show()`, `next()`, `prev()`, `jump(index)`
 - `remove(index?)`, `move_up(index?)`, `move_down(index?)`, `undo()`
 - `skip(index?)`, `hide_skipped()`, `note(index?)`
+- `note_discard()`
 - `refresh_snapshot(index?)`
 - `import(name?)`, `import_report()`, `cancel_import()`
 - `fisheye()`, `fisheye_close()`, `fisheye_range(previous, next)`

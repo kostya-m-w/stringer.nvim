@@ -2,6 +2,16 @@ local model = require('stringer.model')
 local state = require('stringer.state')
 local M = {}
 
+function M.discard()
+  local editor = M.editor
+  if not editor or not vim.api.nvim_buf_is_valid(editor.buf) then return nil, 'No note draft to discard' end
+  local win = editor.win
+  vim.api.nvim_buf_delete(editor.buf, { force = true })
+  M.editor = nil
+  if win and vim.api.nvim_win_is_valid(win) then vim.api.nvim_win_close(win, true) end
+  return true
+end
+
 function M.save()
   local editor = M.editor
   if not editor or not vim.api.nvim_buf_is_valid(editor.buf) then return nil, 'No note editor' end
@@ -27,9 +37,10 @@ function M.open(record, index)
   local editor = M.editor
   if editor and vim.api.nvim_buf_is_valid(editor.buf) then
     local same = editor.record == record and editor.index == index
-      and editor.revision == (record.revision or 0)
     if not same and vim.bo[editor.buf].modified then
-      return nil, 'Save or discard the open note draft before editing another mark'
+      if editor.win and vim.api.nvim_win_is_valid(editor.win) then vim.api.nvim_set_current_win(editor.win)
+      else M.open(editor.record, editor.index) end
+      return nil, 'Unsaved note draft reopened; save it or press D to discard it before editing another mark'
     end
     if same then
       if editor.win and vim.api.nvim_win_is_valid(editor.win) then
@@ -62,12 +73,10 @@ function M.open(record, index)
       end,
     })
     vim.keymap.set('n', 'q', function()
-      if vim.bo[buf].modified then
-        vim.notify('Stringer: save the note with :write or discard it with :bwipeout!', vim.log.levels.ERROR)
-      else
-        vim.cmd.close()
-      end
-    end, { buffer = buf, desc = 'Close saved note' })
+      vim.cmd.close()
+    end, { buffer = buf, desc = 'Close note and keep an unsaved draft' })
+    vim.keymap.set('n', 'D', function() M.discard() end,
+      { buffer = buf, desc = 'Discard unsaved note draft' })
   end
   local width = math.max(1, math.min(80, vim.o.columns - 4))
   local height = math.max(1, math.min(16, vim.o.lines - 6))
@@ -76,7 +85,7 @@ function M.open(record, index)
     relative = 'editor', width = width, height = height,
     row = math.max(0, math.floor((vim.o.lines - height) / 2) - 1),
     col = math.max(0, math.floor((vim.o.columns - width) / 2)),
-    style = 'minimal', border = 'rounded', title = ' Stringer note — :write to save ',
+    style = 'minimal', border = 'rounded', title = ' Stringer note — :write save · q keep draft · D discard ',
   })
   local note_win = editor.win
   vim.api.nvim_create_autocmd('WinClosed', {

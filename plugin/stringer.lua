@@ -13,7 +13,7 @@ local arguments = require('stringer.arguments')
 stringer._initialize()
 local commands = {
   'new', 'open', 'show', 'add', 'next', 'prev', 'rename', 'remove', 'move-up', 'move-down', 'undo', 'reload',
-  'skip', 'hide-skipped', 'note', 'import', 'import-report', 'cancel-import', 'copy', 'refresh-snapshot',
+  'skip', 'hide-skipped', 'note', 'note-discard', 'import', 'import-report', 'cancel-import', 'copy', 'refresh-snapshot',
   'fisheye', 'fisheye-close', 'fisheye-range', 'fisheye-notes', 'fisheye-refresh',
   'directory', 'move',
 }

@@ -158,7 +158,19 @@ local ok, err = xpcall(function()
   lua('assert(require("stringer").move_down(2))')
   assert(lua('return not pcall(vim.cmd, "wq")'), 'Stale note save unexpectedly succeeded')
   assert(lua('return vim.bo.modified'), 'Failed note save lost draft')
-  lua('vim.cmd("bwipeout!")')
+  local draft = lua('return vim.api.nvim_get_current_buf()')
+  input('q')
+  assert(lua('return vim.api.nvim_get_current_buf() ~= (...) and vim.api.nvim_buf_is_valid((...))', draft, draft),
+    'q did not close the stale editor while keeping its draft')
+  lua('require("stringer").note(2)')
+  assert(lua('return vim.api.nvim_get_current_buf() == (...) and vim.api.nvim_get_current_line():find("changed", 1, true) ~= nil', draft),
+    'Reopening the stale note discarded its draft')
+  input('D')
+  assert(lua('return not vim.api.nvim_buf_is_valid((...))', draft), 'D did not discard the draft')
+  lua('assert(require("stringer").note(3))')
+  input('iFresh note<Esc>')
+  input('q')
+  lua('assert(require("stringer").note_discard())')
 
   lua([[
     vim.api.nvim_set_current_win(_G.codewin)
